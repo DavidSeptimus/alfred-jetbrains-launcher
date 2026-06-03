@@ -125,6 +125,8 @@ components, so `jb webfoo` finds `~/work/web/foo`.
 | ⌘⇧  | Pin / unpin (pinned float to the top, marked ★) — stays open, list refreshes |
 | ⌘⌥  | Forget — hide from the launcher (stays open; `jb forget --clear` restores)   |
 
+![Pressing ⌥ on a result drills down to a picker of installed IDEs, reopening the project in the one you choose](docs/img/demo.gif)
+
 ### Which IDE opens a project
 
 1. The IDE recorded for that project (`productionCode`), in the **exact version**
