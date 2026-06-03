@@ -92,7 +92,8 @@ seamless — it downloads via the binary, so the new workflow isn't quarantined.
 workflow clears that itself on first run, as described above.)
 
 Released builds also surface an **"Update available" banner** at the top of `jb`
-when a newer version exists — the check runs in the background about once a day.
+when a newer version exists — **press ↩ on it to update in place** (no need to run
+`jbup` separately). The check runs in the background about once a day.
 
 Self-update only applies to **released builds**. A build from source (`make
 build`/`make install`) reports "auto-update disabled" — update it with
@@ -228,6 +229,10 @@ The binary speaks Alfred Script Filter JSON on stdout:
 
 ## Development
 
+The non-obvious control flows — project discovery, IDE resolution, the cached
+update check, and the first-run quarantine self-heal — are diagrammed in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ```
 cmd/jb            workflow backend: search / ides / open / action / refresh
 cmd/genplist      generates info.plist + per-object canvas icons from workflow/ides.json
@@ -251,6 +256,7 @@ assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow i
 | `make install`                            | symlink the bundle into Alfred                                                                  |
 | `make dist`                               | package `dist/jb-<version>.alfredworkflow`                                                      |
 | `make test` / `make vet`                  | `go test ./...` / `go vet ./...`                                                                |
+| `make wipe-update-cache`                  | delete the cached release check so `jb` re-checks now (keeps pins/forgets)                       |
 
 `info.plist` is **generated** (deterministic UUIDv5 UIDs) — edit
 `workflow/ides.json`, not the plist.
