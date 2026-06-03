@@ -243,7 +243,18 @@ func updateBanner(cfg config.Config, product string) (alfred.Item, bool) {
 	if c.LatestTag == "" || !update.IsNewer(c.LatestTag, version) {
 		return alfred.Item{}, false
 	}
-	return infoIcon("Workflow update available — "+c.LatestTag, "Type jbup to update the launcher (you have "+version+")"), true
+	item := infoIcon("Workflow update available — "+c.LatestTag, "↩ to update now (you have "+version+")")
+	item.Valid = alfred.BoolPtr(true)
+	item.Arg = updateActionArg
+	// ↩ runs the update; the project-result modifiers (reveal/pin/…) are
+	// meaningless on this row, so disable them rather than have them act on the
+	// sentinel arg (e.g. pin would otherwise add a junk entry to the state file).
+	no := alfred.BoolPtr(false)
+	item.Mods = map[string]alfred.Mod{
+		"cmd": {Valid: no}, "alt": {Valid: no}, "ctrl": {Valid: no},
+		"shift": {Valid: no}, "cmd+shift": {Valid: no}, "cmd+alt": {Valid: no},
+	}
+	return item, true
 }
 
 // spawnBackgroundRefresh launches a detached `jb update --refresh-cache` that
@@ -288,12 +299,29 @@ func cmdIDEs(args []string) {
 // by the "pick a different IDE" flow to convey the exact chosen IDE.
 const specSep = "\x1f"
 
+// updateActionArg is the sentinel arg carried by the "update available" banner.
+// The unified jb keyword wires ↩ to `jb open --path "$1"`, and Alfred has no
+// per-item routing, so the banner reuses that wiring: cmdOpen recognises this
+// sentinel and runs the self-update instead of opening a project. (\x1f cannot
+// occur in a real path, and the pick flow already passes it through Alfred.)
+const updateActionArg = "\x1fupdate\x1f"
+
 func cmdOpen(args []string) {
 	fs := flag.NewFlagSet("open", flag.ExitOnError)
 	path := fs.String("path", "", "project path")
 	product := fs.String("product", "", "IDE family hard-limit")
 	spec := fs.String("spec", "", "exact pick: code<US>datadir<US>path")
 	_ = fs.Parse(args)
+
+	// The "update available" banner routes ↩ through this same open action; honour
+	// the sentinel by running the self-update rather than opening a project.
+	if *spec == "" && *path == updateActionArg {
+		if channel != "release" {
+			fail("update: disabled for local builds — update with git pull && make install")
+		}
+		updateApply()
+		return
+	}
 
 	cfg := config.Load()
 	var code, datadir, p, family string
@@ -510,11 +538,25 @@ func updateApply() {
 	fmt.Printf("downloaded %s, importing…\n", rel.TagName)
 }
 
-// infoIcon is a non-actionable row carrying the workflow icon.
+// infoIcon is an update-related row carrying the workflow's own (Toolbox) icon,
+// so update prompts read as "the launcher" rather than the IntelliJ fallback that
+// iconPath("") resolves to.
 func infoIcon(title, subtitle string) alfred.Item {
 	item := alfred.Info(title, subtitle)
-	item.Icon = &alfred.Icon{Path: iconPath("")}
+	item.Icon = &alfred.Icon{Path: workflowIcon()}
 	return item
+}
+
+// workflowIcon is the absolute path to the bundle's Toolbox icon (icon.png at the
+// bundle root) — absolute, like iconPath, so Alfred doesn't mis-resolve it through
+// the install symlink. Falls back to the default icon only if icon.png is absent.
+func workflowIcon() string {
+	if wd, err := os.Getwd(); err == nil {
+		if p := filepath.Join(wd, "icon.png"); fileExists(p) {
+			return p
+		}
+	}
+	return iconPath("")
 }
 
 // cmdDoctor prints a human-readable diagnostic of detected IDEs, config roots,
