@@ -202,18 +202,20 @@ Studio, plus **Fleet** and **Air** (whose recent *workspaces* are read from thei
 - Remote-dev / devcontainer entries (detected and skipped).
 
 **Not yet supported:** JetBrains Gateway (remote development), AppCode
-(discontinued by JetBrains in 2022), and the legacy pre-2019 `recentPaths` XML
-schema.
+(discontinued by JetBrains in 2022), and the legacy `recentPaths`/`<list>` XML
+schema that much older IDEs wrote.
 
 ## Supported versions
 
-Discovery reads the modern `recentProjects.xml` schema (the `additionalInfo` →
-`RecentProjectMetaInfo` map), which is what JetBrains IDEs **2019.1+** and Android
-Studio **3.x+** write — there is no per-IDE version list to maintain; whatever
-version directories exist on disk are read. Older IDEs used the legacy
-`recentPaths`/`<list>` schema, which is detected and skipped (those entries
-simply won't appear). Fleet and Air are read from their `recent_ships.*.json`
-workspace store instead of XML.
+There's no per-IDE version list to maintain: discovery reads whichever
+`recentProjects.xml` files carry the modern `additionalInfo` →
+`RecentProjectMetaInfo` map — the format current JetBrains IDEs and Android Studio
+write, which the IntelliJ platform settled on around the **2019.2 / 2019.3**
+releases (the older `recentPaths` list lingered alongside it for a while, so the
+exact cutoff is fuzzy). Files that carry only the legacy `recentPaths`/`<list>`
+schema are detected and skipped, so a much older IDE's entries simply won't
+appear. Fleet and Air are read from their `recent_ships.*.json` workspace store
+instead of XML.
 
 ---
 
