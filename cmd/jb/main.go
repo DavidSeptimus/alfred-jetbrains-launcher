@@ -116,8 +116,13 @@ func cmdSearch(args []string) {
 // the current keyword + query so that pin/forget can re-open Alfred in place.
 func emitSearch(cfg config.Config, product, query string, worktreesFlag bool, keyword string) {
 	// Prefer the live keyword Alfred passed (honours a user rename); fall back to
-	// the built-in keyword when run from the CLI without --keyword.
-	if keyword == "" {
+	// the built-in keyword when run from the CLI without --keyword, or when Alfred
+	// handed over an unresolved/blank value. The latter guards the env-var path:
+	// the Script Filter passes the keyword as $JB_KW_<NAME>, so an unexported var
+	// arrives empty (or as a lone "~" for the worktree variant), and a stale plist
+	// could still pass a literal "{var:…}". Any of those would otherwise be saved
+	// and re-searched by pin/forget, surfacing as stray text in the Alfred box.
+	if keyword == "" || keyword == "~" || strings.Contains(keyword, "{var:") {
 		keyword = keywordFor(product, worktreesFlag)
 	}
 	saveLastSearch(cfg.DataDir, keyword, query)

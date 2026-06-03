@@ -167,20 +167,29 @@ func main() {
 	// the node directly, which an import/regenerate would overwrite). The live
 	// keyword is also passed to the binary via --keyword so pin/forget can re-open
 	// Alfred on the renamed keyword.
+	//
+	// The keyword *field* uses the {var:JB_KW_<NAME>} placeholder, which Alfred
+	// expands when matching the trigger. The script *body*, however, must reference
+	// the keyword as the exported $JB_KW_<NAME> environment variable: Alfred does
+	// NOT expand {var:…} inside a Script Filter's script — it only exports config
+	// variables to the environment. Passing {var:…} there forwards the literal text,
+	// which the binary then saves and pin/forget re-searches (showing a stray
+	// "{var:JB_KW_JB}" in the Alfred box).
 	y := 40.0
 	var kwConfig []any
 	for _, k := range spec.Keywords {
 		sfUID := uid("sf:" + k.Keyword)
 		openUID := uid("action:open:" + k.Keyword)
 		kwVar := "JB_KW_" + strings.ToUpper(k.Keyword)
-		kwRef := "{var:" + kwVar + "}"
+		kwRef := "{var:" + kwVar + "}" // keyword field — Alfred expands {var:…} here
+		kwEnv := "${" + kwVar + "}"    // script body — Alfred exports the var to the env, not {var:…}
 		base := `./jb search`
 		if k.Product != "" {
 			base += ` --product ` + k.Product
 		}
 		openScript := `./jb open --product "` + k.Product + `" --path "$1"`
 		objects = append(objects,
-			scriptFilter(sfUID, kwRef, base+` --keyword "`+kwRef+`" --query "$1"`, k.Title, k.Subtext, true),
+			scriptFilter(sfUID, kwRef, base+` --keyword "`+kwEnv+`" --query "$1"`, k.Title, k.Subtext, true),
 			scriptAction(openUID, openScript),
 		)
 		// Canvas icons: the keyword + its open action show the IDE's icon
@@ -207,7 +216,7 @@ func main() {
 		// `<keyword>~` — same search, but including git worktrees.
 		wtUID := uid("sf:" + k.Keyword + "~")
 		objects = append(objects, scriptFilter(wtUID, kwRef+"~",
-			base+` --worktrees --keyword "`+kwRef+`~" --query "$1"`, k.Title+" (+ worktrees)",
+			base+` --worktrees --keyword "`+kwEnv+`~" --query "$1"`, k.Title+" (+ worktrees)",
 			k.Subtext+", including git worktrees", true))
 		objIcons = append(objIcons, iconRef{wtUID, k.Product})
 		addUI(wtUID, 290, y)
