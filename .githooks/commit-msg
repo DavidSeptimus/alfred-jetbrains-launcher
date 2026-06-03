@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Conventional Commits enforcement. Enable once per clone with `make hooks`
+# (sets core.hooksPath=.githooks). Delegates to the shared validator so the hook
+# and CI apply the identical rule.
+set -euo pipefail
+exec "$(git rev-parse --show-toplevel)/scripts/commit-msg-lint.sh" "$1"

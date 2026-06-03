@@ -14,7 +14,7 @@ DEFAULT_DATA := $(HOME)/Library/Application Support/jb-alfred
 LDFLAGS     = -s -w -X main.version=$(VERSION) -X main.channel=$(CHANNEL)
 GOBUILD     = CGO_ENABLED=0 GOOS=darwin go build -ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-universal plist icons bundle install dist test fmt vet clean wipe-update-cache
+.PHONY: all build build-universal plist icons bundle install dist test fmt vet clean wipe-update-cache hooks changelog
 
 all: bundle
 
@@ -68,6 +68,17 @@ dist: build-universal icons plist
 	# so Alfred finds info.plist at the top level on import.
 	ditto -c -k --norsrc --noextattr $(BUNDLE) dist/jb-$(VERSION).alfredworkflow
 	@echo "packaged dist/jb-$(VERSION).alfredworkflow"
+
+## hooks: enable the repo's git hooks (Conventional Commits check at commit time)
+hooks:
+	git config core.hooksPath .githooks
+	@echo "git hooks enabled — commit messages are now checked against Conventional Commits"
+
+## changelog: regenerate CHANGELOG.md from Conventional Commits (preview unreleased)
+changelog:
+	@command -v git-cliff >/dev/null 2>&1 || { echo "git-cliff not found — install with: brew install git-cliff"; exit 1; }
+	git-cliff -o CHANGELOG.md
+	@echo "wrote CHANGELOG.md"
 
 ## test / vet / fmt
 test:

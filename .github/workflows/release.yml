@@ -1,17 +1,18 @@
 name: release
 
-# Cut a release from GitHub: Actions → "release" → Run workflow, pick the bump.
-# The job derives the next version from the latest v* tag, builds the universal
-# .alfredworkflow, commits the VERSION bump, tags it, and publishes the release.
+# Cut a release from GitHub: Actions → "release" → Run workflow, pick the bump
+# ("auto" derives it from the Conventional Commits since the last tag). The job
+# regenerates the changelog, builds the universal .alfredworkflow, commits the
+# VERSION + CHANGELOG bump, tags it, and publishes the release with changelog notes.
 # (Runs on macOS for sips/iconutil/lipo/codesign.)
 on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Semver bump"
+        description: "Version bump (auto = derive from Conventional Commits)"
         type: choice
-        options: [patch, minor, major]
-        default: patch
+        options: [auto, patch, minor, major]
+        default: auto
 
 permissions:
   contents: write
@@ -28,27 +29,45 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Determine next version
+      # Determine the next version AND regenerate the full CHANGELOG.md in one step.
+      # git-cliff --bump derives the version from the unreleased Conventional Commits
+      # (feat → minor, fix → patch, breaking → major); a non-"auto" dispatch input
+      # forces that level instead. The action exposes the result as outputs.version.
+      - name: Update CHANGELOG.md and compute version
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: ${{ inputs.bump == 'auto' && '--bump' || format('--bump {0}', inputs.bump) }}
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Resolve version
         id: ver
         env:
-          BUMP: ${{ inputs.bump }}
+          TAG: ${{ steps.changelog.outputs.version }}
         run: |
-          latest="$(git tag -l 'v*' --sort=-v:refname | head -1)"
-          latest="${latest:-v0.0.0}"
-          IFS=. read -r major minor patch <<< "${latest#v}"
-          case "$BUMP" in
-            major) major=$((major + 1)); minor=0; patch=0 ;;
-            minor) minor=$((minor + 1)); patch=0 ;;
-            patch) patch=$((patch + 1)) ;;
-          esac
-          new="${major}.${minor}.${patch}"
-          tag="v${new}"
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            echo "::error::git-cliff produced no version — no releasable commits since the last tag?"; exit 1
+          fi
+          version="${TAG#v}"      # strip any leading v
+          tag="v${version}"        # …and re-add it so the tag is always v-prefixed
           if git rev-parse "$tag" >/dev/null 2>&1; then
             echo "::error::tag $tag already exists"; exit 1
           fi
-          echo "version=$new" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "Releasing $latest -> $tag ($BUMP)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (bump=${{ inputs.bump }})"
+
+      # The same generator, but only this release's section — used verbatim as the
+      # GitHub Release body (replacing GitHub's auto --generate-notes).
+      - name: Build release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ steps.ver.outputs.tag }} --unreleased --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
 
       - name: Build and package
         # Build before tagging so a build failure leaves no orphan tag. The
@@ -56,7 +75,7 @@ jobs:
         # no JetBrains apps are installed on the runner.
         run: make dist VERSION="${{ steps.ver.outputs.version }}"
 
-      - name: Commit version bump and tag
+      - name: Commit version bump + changelog and tag
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.ver.outputs.tag }}
@@ -64,11 +83,12 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           echo "$VERSION" > VERSION
-          git add VERSION
+          git add VERSION CHANGELOG.md
           if git diff --cached --quiet; then
-            echo "VERSION is already $VERSION — tagging the current commit."
+            echo "VERSION and CHANGELOG already current — tagging the current commit."
           else
-            git commit -m "Release $TAG"
+            # Conventional + skipped by cliff.toml, so it never appears in the changelog.
+            git commit -m "chore(release): $TAG"
             git push origin HEAD:${{ github.ref_name }}
           fi
           git tag -a "$TAG" -m "$TAG"
@@ -78,4 +98,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ver.outputs.tag }}
-        run: gh release create "$TAG" dist/*.alfredworkflow --title "$TAG" --generate-notes
+        # Body is the changelog's section for this release (built above), not GitHub's
+        # auto-generated commit list.
+        run: gh release create "$TAG" dist/*.alfredworkflow --title "$TAG" --notes-file RELEASE_NOTES.md

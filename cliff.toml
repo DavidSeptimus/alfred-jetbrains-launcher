@@ -1,0 +1,83 @@
+# git-cliff configuration — generates a Keep a Changelog–style CHANGELOG.md from
+# Conventional Commits. Scope is deliberately user-facing: feat → Added, fix →
+# Fixed, perf → Changed, with breaking changes flagged inline. Plumbing commits
+# (docs, refactor, chore, ci, build, test, style) are omitted from the changelog.
+# Reference: https://git-cliff.org/docs/configuration
+
+[changelog]
+# A static preamble; the generated version sections are appended after it.
+header = """
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+
+# One section per release (or [Unreleased] when no tag yet). Releases with no
+# user-facing commits are skipped entirely. Groups are ordered by the hidden
+# "<!-- N -->" prefix on each parser's group, then stripped for display. A compare
+# link closes each section; a postprocessor inserts the blank line between sections.
+body = """
+{% if commits %}\
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif -%}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.breaking %}**Breaking:** {% endif %}{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}
+{% if version and previous and previous.version -%}
+[{{ version | trim_start_matches(pat="v") }}]: https://github.com/davidseptimus/alfred-jetbrains-launcher/compare/{{ previous.version }}...{{ version }}
+{% elif previous and previous.version -%}
+[unreleased]: https://github.com/davidseptimus/alfred-jetbrains-launcher/compare/{{ previous.version }}...HEAD
+{% endif -%}
+{% endif %}\
+"""
+
+trim = true
+footer = ""
+
+# Put a blank line before each "## [" heading (keepachangelog spacing). The body is
+# trimmed per-section, so this is the reliable place to separate sections.
+postprocessors = [
+  { pattern = '(?m)^(## \[)', replace = "\n${1}" },
+]
+
+[git]
+# Parse Conventional Commits and drop anything that doesn't conform (e.g. the old
+# "Release vX.Y.Z" and initial-import commits) before grouping.
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+# Keep breaking changes even when their type would otherwise be filtered out.
+protect_breaking_commits = true
+# With filter_commits = true, only commits matched by a non-skip parser appear.
+filter_commits = true
+topo_order = false
+sort_commits = "newest"
+tag_pattern = "v[0-9]*"
+
+commit_parsers = [
+  # User-facing categories.
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^fix", group = "<!-- 1 -->Fixed" },
+  { message = "^perf", group = "<!-- 2 -->Changed" },
+  # Breaking changes of any other type still surface (under Changed, flagged inline).
+  { message = "^[a-z]+(\\(.+\\))?!", group = "<!-- 2 -->Changed" },
+  { body = ".*BREAKING ?CHANGE", group = "<!-- 2 -->Changed" },
+  # Everything else is plumbing — omitted from the changelog.
+  { message = "^docs", skip = true },
+  { message = "^refactor", skip = true },
+  { message = "^style", skip = true },
+  { message = "^test", skip = true },
+  { message = "^build", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^chore", skip = true },
+  { message = "^revert", skip = true },
+]

@@ -1,0 +1,44 @@
+name: commit-lint
+
+# Validates that commit messages follow Conventional Commits — the same rule the
+# local commit-msg hook enforces (scripts/commit-msg-lint.sh), re-checked here so a
+# commit made without the hook (web UI, a clone that skipped `make hooks`) can't slip
+# non-conventional history onto main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base/before commit to scope the range
+
+      - name: Validate commit messages
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ -n "${PR_BASE:-}" ]; then
+            range="${PR_BASE}..HEAD"                 # PR: every commit it adds
+          elif [ -n "${BEFORE:-}" ] && ! printf '%s' "$BEFORE" | grep -qE '^0+$'; then
+            range="${BEFORE}..${HEAD_SHA}"           # push: only the new commits
+          else
+            range="HEAD~1..HEAD"                     # new branch / first push
+          fi
+          echo "Checking commits in $range"
+          fail=0
+          for sha in $(git rev-list "$range"); do
+            if ! git log -1 --format=%B "$sha" | scripts/commit-msg-lint.sh -; then
+              echo "  ↑ offending commit: $sha" >&2
+              fail=1
+            fi
+          done
+          exit $fail

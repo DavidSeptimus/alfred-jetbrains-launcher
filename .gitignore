@@ -3,3 +3,5 @@
 .idea/
 .DS_Store
 /.playwright-mcp/
+# Transient release-notes file produced by the release workflow (git-cliff).
+/RELEASE_NOTES.md
