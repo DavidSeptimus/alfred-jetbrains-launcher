@@ -76,6 +76,12 @@ func main() {
 	openPickUID := uid("action:openpick")
 	updateUID := uid("sf:update")
 	updateApplyUID := uid("action:update")
+	// The unified-keyword update banner routes ↩ through a Conditional that sends
+	// the banner row (jb_action=update) to update-apply + a notification, and any
+	// other row to the open action.
+	updateCondUID := uid("cond:update")
+	updateCondOutUID := uid("cond:update:matched")
+	notifyUID := uid("output:notify")
 
 	var objects []any
 	var objIcons []iconRef // per-object canvas icons (uid -> family; "" = main workflow icon)
@@ -100,6 +106,8 @@ func main() {
 		scriptFilter(updateUID, "jbup", `./jb update --check`, "Update This Workflow",
 			"Check GitHub for a newer version of the JetBrains IDE Project Launcher workflow (not your IDEs)", false),
 		scriptAction(updateApplyUID, `./jb update --apply`),
+		conditional(updateCondUID, updateCondOutUID, "{var:jb_action}", "update", "Update", "Open"),
+		notification(notifyUID, "JetBrains IDE Project Launcher", "Downloading the update…"),
 	)
 	addUI(revealUID, 760, 220)
 	addUI(copyUID, 760, 360)
@@ -110,6 +118,8 @@ func main() {
 	addUI(openPickUID, 760, 920)
 	addUI(updateUID, 420, 1060)
 	addUI(updateApplyUID, 760, 1060)
+	addUI(updateCondUID, 600, 1200)
+	addUI(notifyUID, 980, 1200)
 
 	// Shared/utility objects use the main (Toolbox) icon on the canvas.
 	objIcons = append(objIcons,
@@ -119,15 +129,15 @@ func main() {
 
 	connections := map[string]any{}
 
-	// pick (ides) -> open-by-spec; jbup -> update-apply.
+	// pick (ides) -> open-by-spec; jbup -> update-apply + "Downloading…" notification.
 	connections[pickUID] = []any{conn(openPickUID, modNone)}
-	connections[updateUID] = []any{conn(updateApplyUID, modNone)}
+	connections[updateUID] = []any{conn(updateApplyUID, modNone), conn(notifyUID, modNone)}
 
 	// Each keyword's results route to its open action (↩) plus the shared
 	// reveal/pick/copy/terminal/pin/forget actions on modifier keys.
-	keyMods := func(openUID string) []any {
+	keyMods := func(enter string) []any {
 		return []any{
-			conn(openUID, modNone),
+			conn(enter, modNone),
 			connSub(revealUID, modCmd, "Reveal in Finder"),
 			connSub(pickUID, modAlt, "Open in a different IDE…"),
 			connSub(copyUID, modCtrl, "Copy path"),
@@ -166,7 +176,20 @@ func main() {
 		objIcons = append(objIcons, iconRef{sfUID, k.Product}, iconRef{openUID, k.Product})
 		addUI(sfUID, 50, y)
 		addUI(openUID, 980, y)
-		connections[sfUID] = keyMods(openUID)
+
+		// The unified `jb` / `jb~` keywords carry the update banner, so route their
+		// ↩ through the Conditional (banner row -> notify + apply; everything else
+		// -> open). Per-IDE keywords have no banner and open directly.
+		enterUID := openUID
+		if k.Product == "" {
+			enterUID = updateCondUID
+			connections[updateCondUID] = []any{
+				connFrom(notifyUID, updateCondOutUID),
+				connFrom(updateApplyUID, updateCondOutUID),
+				conn(openUID, modNone), // else: open the selected project normally
+			}
+		}
+		connections[sfUID] = keyMods(enterUID)
 
 		// `<keyword>~` — same search, but including git worktrees.
 		wtUID := uid("sf:" + k.Keyword + "~")
@@ -175,7 +198,7 @@ func main() {
 			k.Subtext+", including git worktrees", true))
 		objIcons = append(objIcons, iconRef{wtUID, k.Product})
 		addUI(wtUID, 290, y)
-		connections[wtUID] = keyMods(openUID)
+		connections[wtUID] = keyMods(enterUID)
 
 		kwConfig = append(kwConfig, keywordField(kwVar, k.Keyword, k.Title))
 		y += 120
@@ -338,6 +361,57 @@ func connSub(dest string, mod int, subtext string) map[string]any {
 	c := conn(dest, mod)
 	c["modifiersubtext"] = subtext
 	return c
+}
+
+// connFrom is a connection that originates from a specific Conditional output
+// (its matched-condition uid). Else-branch connections use plain conn() and omit
+// sourceoutputuid — that omission is how Alfred encodes the "otherwise" path.
+func connFrom(dest, sourceOutput string) map[string]any {
+	c := conn(dest, modNone)
+	c["sourceoutputuid"] = sourceOutput
+	return c
+}
+
+// conditional builds a Conditional utility with one "is equal to" rule
+// (matchmode 0) on input: matching input flows out of outUID (connFrom), and
+// anything else flows out of the unlabelled else path (plain conn).
+func conditional(uid, outUID, input, matchStr, matchLabel, elseLabel string) map[string]any {
+	return map[string]any{
+		"config": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"inputstring":        input,
+					"matchcasesensitive": false,
+					"matchmode":          0, // 0 = "is equal to"
+					"matchstring":        matchStr,
+					"outputlabel":        matchLabel,
+					"uid":                outUID,
+				},
+			},
+			"elselabel": elseLabel,
+			"hideelse":  false,
+		},
+		"type":    "alfred.workflow.utility.conditional",
+		"uid":     uid,
+		"version": 1,
+	}
+}
+
+// notification builds a Post Notification output. onlyshowifquerypopulated is
+// false so a static message still shows when no query flows into it.
+func notification(uid, title, text string) map[string]any {
+	return map[string]any{
+		"config": map[string]any{
+			"lastpathcomponent":        false,
+			"onlyshowifquerypopulated": false,
+			"removeextension":          false,
+			"text":                     text,
+			"title":                    title,
+		},
+		"type":    "alfred.workflow.output.notification",
+		"uid":     uid,
+		"version": 1,
+	}
 }
 
 // keywordField builds a Configure-Workflow text field that overrides one

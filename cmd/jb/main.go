@@ -245,10 +245,12 @@ func updateBanner(cfg config.Config, product string) (alfred.Item, bool) {
 	}
 	item := infoIcon("Workflow update available — "+c.LatestTag, "↩ to update now (you have "+version+")")
 	item.Valid = alfred.BoolPtr(true)
-	item.Arg = updateActionArg
-	// ↩ runs the update; the project-result modifiers (reveal/pin/…) are
-	// meaningless on this row, so disable them rather than have them act on the
-	// sentinel arg (e.g. pin would otherwise add a junk entry to the state file).
+	// The unified `jb`/`jb~` Script Filters route ↩ through a Conditional that
+	// sends this row (tagged jb_action=update) to the update-apply action plus a
+	// notification, and every other row to the open action. Set the tag here.
+	item.Variables = map[string]string{"jb_action": "update"}
+	// The project-result modifiers (reveal/pin/…) are meaningless on this row, so
+	// disable them rather than have them act on an empty/foreign arg.
 	no := alfred.BoolPtr(false)
 	item.Mods = map[string]alfred.Mod{
 		"cmd": {Valid: no}, "alt": {Valid: no}, "ctrl": {Valid: no},
@@ -299,29 +301,12 @@ func cmdIDEs(args []string) {
 // by the "pick a different IDE" flow to convey the exact chosen IDE.
 const specSep = "\x1f"
 
-// updateActionArg is the sentinel arg carried by the "update available" banner.
-// The unified jb keyword wires ↩ to `jb open --path "$1"`, and Alfred has no
-// per-item routing, so the banner reuses that wiring: cmdOpen recognises this
-// sentinel and runs the self-update instead of opening a project. (\x1f cannot
-// occur in a real path, and the pick flow already passes it through Alfred.)
-const updateActionArg = "\x1fupdate\x1f"
-
 func cmdOpen(args []string) {
 	fs := flag.NewFlagSet("open", flag.ExitOnError)
 	path := fs.String("path", "", "project path")
 	product := fs.String("product", "", "IDE family hard-limit")
 	spec := fs.String("spec", "", "exact pick: code<US>datadir<US>path")
 	_ = fs.Parse(args)
-
-	// The "update available" banner routes ↩ through this same open action; honour
-	// the sentinel by running the self-update rather than opening a project.
-	if *spec == "" && *path == updateActionArg {
-		if channel != "release" {
-			fail("update: disabled for local builds — update with git pull && make install")
-		}
-		updateApply()
-		return
-	}
 
 	cfg := config.Load()
 	var code, datadir, p, family string
@@ -516,44 +501,29 @@ func updateCheck() {
 }
 
 func updateApply() {
-	// The Script Filter window is already gone by the time this runs, so notify
-	// the user that their ↩ registered and that a download is underway. Alfred's
-	// import sheet (from the `open` below) is the success signal; the failure
-	// notifications below cover the paths that would otherwise fail silently.
-	notify("JetBrains Launcher", "Downloading the update…")
 	rel, err := update.Latest()
 	if err != nil {
-		notify("Update failed", "Couldn't reach GitHub — "+err.Error())
 		fail("update: " + err.Error())
 	}
 	url, ok := rel.WorkflowAsset()
 	if !ok {
 		// No packaged asset — open the release page so the user can grab it.
-		notify("Update", "No downloadable asset — opening the release page")
 		_ = exec.Command("open", rel.HTMLURL).Run()
 		fail("update: latest release has no .alfredworkflow asset (opened release page)")
 	}
 	path, err := update.Download(url)
 	if err != nil {
-		notify("Update failed", "Download error — "+err.Error())
 		fail("update: " + err.Error())
 	}
 	// Opening the .alfredworkflow hands it to Alfred, which imports it in place
-	// (same bundle id), preserving config + pins/forgets.
+	// (same bundle id), preserving config + pins/forgets. The "Downloading…"
+	// notification is posted by the workflow graph (a Post Notification object
+	// wired alongside this action), not from here: Alfred's own notification is
+	// reliable, whereas an osascript one spawned via Alfred is silently dropped.
 	if err := exec.Command("open", path).Run(); err != nil {
-		notify("Update failed", err.Error())
 		fail("update: " + err.Error())
 	}
 	fmt.Printf("downloaded %s, importing…\n", rel.TagName)
-}
-
-// notify posts a best-effort macOS notification via osascript. Used for
-// self-update progress/failures, where the Script Filter window has already
-// closed so there is no Alfred row left to carry the message. Errors are ignored
-// (notifications may be disabled); it appears under the script runner's name.
-func notify(title, message string) {
-	script := "display notification " + applescriptQuote(message) + " with title " + applescriptQuote(title)
-	_ = exec.Command("osascript", "-e", script).Run()
 }
 
 // infoIcon is an update-related row carrying the workflow's own (Toolbox) icon,
