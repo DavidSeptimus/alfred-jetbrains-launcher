@@ -82,9 +82,9 @@ func TestOpenCommand(t *testing.T) {
 
 	// {name} → the project's folder name (quoted), alongside {path}.
 	got = captureArgv(t, func() {
-		_ = OpenCommand("cmux new-workspace --name {name} --cwd {path}", "/Users/dave/My Project")
+		_ = OpenCommand("editor --name {name} --dir {path}", "/Users/dave/My Project")
 	})
-	want = []string{"/bin/zsh", "-lc", `cmux new-workspace --name 'My Project' --cwd '/Users/dave/My Project'`}
+	want = []string{"/bin/zsh", "-lc", `editor --name 'My Project' --dir '/Users/dave/My Project'`}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("name+path argv:\n got %q\nwant %q", got, want)
 	}

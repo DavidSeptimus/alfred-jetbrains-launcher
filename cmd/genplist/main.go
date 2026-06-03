@@ -531,7 +531,7 @@ func userConfig() []any {
 		worktreeCheckbox,
 		terminalPopup,
 		tf("JB_OPEN_CMD", "Custom open command",
-			"Command run by the ⌃⇧ action. {path} → the project path, {name} → its folder name (both quoted for you — leave them unquoted). Runs in your login shell (a script path works too). Examples: code {path}  ·  cmux new-workspace --name {name} --cwd {path}",
+			"Command run by the ⌃⇧ action. {path} → the project path, {name} → its folder name (both quoted for you — leave them unquoted). Runs in your login shell (a script path works too). Examples: code {path}  ·  ~/bin/open-project.sh {name} {path}",
 			""),
 		sortPopup,
 		tf("JB_IGNORE_CONTENT", "Ignore content",

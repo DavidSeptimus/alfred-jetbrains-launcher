@@ -197,7 +197,6 @@ since it's just a shell line, a path to a script works too.
 | VS Code                                                       | `code {path}`                                   |
 | Cursor                                                        | `cursor {path}`                                 |
 | Zed                                                           | `zed {path}`                                    |
-| [cmux](https://github.com/manaflow-ai/cmux) (named workspace) | `cmux new-workspace --name {name} --cwd {path}` |
 | Your own script                                               | `~/bin/open-project.sh {name} {path}`           |
 
 Until you set it, the ⌃⇧ row stays visible but inert (it tells you to configure
