@@ -50,6 +50,7 @@ func main() {
 	out := flag.String("o", "info.plist", "output info.plist path")
 	version := flag.String("version", "0.0.0", "workflow version")
 	bundle := flag.String("bundle", "", "bundle dir; when set, also writes per-object <uid>.png canvas icons")
+	channel := flag.String("channel", "release", "build channel; only 'release' includes the in-app update UI")
 	flag.Parse()
 
 	data, err := os.ReadFile(*in)
@@ -63,6 +64,12 @@ func main() {
 
 	ns := namespace(spec.Workflow.BundleID)
 	uid := func(role string) string { return uuid5(ns, spec.Workflow.BundleID+":"+role) }
+
+	// The in-app updater is release-only: a source build updates via git, so its
+	// plist omits the whole update UI (the jbup keyword, the banner Conditional,
+	// the notifications) rather than surfacing an "update unavailable" row that
+	// would clutter the launcher.
+	release := *channel == "release"
 
 	// Shared modifier actions + the "pick a different IDE" drill-down. The project
 	// path reaches every action as $1 (the actioned item's arg) — the proven Alfred
@@ -103,13 +110,6 @@ func main() {
 		// passes the project path as the query — we must NOT let it filter the
 		// IDE list against that path (which would hide every IDE).
 		scriptFilter(pickUID, "", `./jb ides --path "$1"`, "Open in a Different IDE", "Pick an installed IDE", false),
-		// `jbup` — check for and install a newer release of THIS workflow.
-		scriptFilter(updateUID, "jbup", `./jb update --check`, "Update This Workflow",
-			"Check GitHub for a newer version of the JetBrains IDE Project Launcher workflow (not your IDEs)", false),
-		scriptAction(updateApplyUID, `./jb update --apply`),
-		conditional(updateCondUID, updateCondOutUID, "{var:jb_action}", "update", "Update", "Open"),
-		notification(notifyUID, "JetBrains IDE Project Launcher", "Downloading the update…", false),
-		notification(errorNotifyUID, "Couldn't update the launcher", "{query}", true),
 	)
 	addUI(revealUID, 760, 220)
 	addUI(copyUID, 760, 360)
@@ -118,27 +118,37 @@ func main() {
 	addUI(forgetUID, 760, 780)
 	addUI(pickUID, 420, 920)
 	addUI(openPickUID, 760, 920)
-	addUI(updateUID, 420, 1060)
-	addUI(updateApplyUID, 760, 1060)
-	addUI(updateCondUID, 600, 1200)
-	addUI(notifyUID, 980, 1200)
-	addUI(errorNotifyUID, 980, 1340)
 
 	// Shared/utility objects use the main (Toolbox) icon on the canvas.
-	objIcons = append(objIcons,
-		iconRef{pickUID, ""}, iconRef{openPickUID, ""},
-		iconRef{updateUID, ""}, iconRef{updateApplyUID, ""},
-	)
+	objIcons = append(objIcons, iconRef{pickUID, ""}, iconRef{openPickUID, ""})
 
 	connections := map[string]any{}
+	connections[pickUID] = []any{conn(openPickUID, modNone)} // pick (ides) -> open-by-spec
 
-	// pick (ides) -> open-by-spec; jbup -> update-apply + "Downloading…" notification.
-	connections[pickUID] = []any{conn(openPickUID, modNone)}
-	connections[updateUID] = []any{conn(updateApplyUID, modNone), conn(notifyUID, modNone)}
-	// After applying (from either the banner or jbup), surface any failure via a
-	// notification that shows update-apply's stdout — suppressed when empty, i.e.
-	// on success, where Alfred's import sheet is the only confirmation.
-	connections[updateApplyUID] = []any{conn(errorNotifyUID, modNone)}
+	// Update UI — release only. A source build's plist has none of this, so the
+	// unified keyword's ↩ just opens (see the loop) and there is no jbup keyword.
+	if release {
+		objects = append(objects,
+			// `jbup` — check for and install a newer release of THIS workflow.
+			scriptFilter(updateUID, "jbup", `./jb update --check`, "Update This Workflow",
+				"Check GitHub for a newer version of the JetBrains IDE Project Launcher workflow (not your IDEs)", false),
+			scriptAction(updateApplyUID, `./jb update --apply`),
+			conditional(updateCondUID, updateCondOutUID, "{var:jb_action}", "update", "Update", "Open"),
+			notification(notifyUID, "JetBrains IDE Project Launcher", "Downloading the update…", false),
+			notification(errorNotifyUID, "Couldn't update the launcher", "{query}", true),
+		)
+		addUI(updateUID, 420, 1060)
+		addUI(updateApplyUID, 760, 1060)
+		addUI(updateCondUID, 600, 1200)
+		addUI(notifyUID, 980, 1200)
+		addUI(errorNotifyUID, 980, 1340)
+		objIcons = append(objIcons, iconRef{updateUID, ""}, iconRef{updateApplyUID, ""})
+
+		// jbup ↩ -> update-apply + "Downloading…"; update-apply -> error notification
+		// (shown only when apply prints an error, i.e. suppressed on success).
+		connections[updateUID] = []any{conn(updateApplyUID, modNone), conn(notifyUID, modNone)}
+		connections[updateApplyUID] = []any{conn(errorNotifyUID, modNone)}
+	}
 
 	// Each keyword's results route to its open action (↩) plus the shared
 	// reveal/pick/copy/terminal/pin/forget actions on modifier keys.
@@ -184,11 +194,12 @@ func main() {
 		addUI(sfUID, 50, y)
 		addUI(openUID, 980, y)
 
-		// The unified `jb` / `jb~` keywords carry the update banner, so route their
-		// ↩ through the Conditional (banner row -> notify + apply; everything else
-		// -> open). Per-IDE keywords have no banner and open directly.
+		// On release builds the unified `jb` / `jb~` keywords carry the update
+		// banner, so route their ↩ through the Conditional (banner row -> notify +
+		// apply; everything else -> open). Per-IDE keywords — and every keyword on a
+		// source build, which has no update UI — open directly.
 		enterUID := openUID
-		if k.Product == "" {
+		if release && k.Product == "" {
 			enterUID = updateCondUID
 			connections[updateCondUID] = []any{
 				connFrom(notifyUID, updateCondOutUID),

@@ -34,7 +34,7 @@ build-universal:
 ## (run after `icons` so the per-object <uid>.png files can be populated)
 plist:
 	mkdir -p $(BUNDLE)
-	go run ./cmd/genplist -ides workflow/ides.json -o $(BUNDLE)/info.plist -version $(VERSION) -bundle $(BUNDLE)
+	go run ./cmd/genplist -ides workflow/ides.json -o $(BUNDLE)/info.plist -version $(VERSION) -channel $(CHANNEL) -bundle $(BUNDLE)
 
 ## icons: stage the vendored fallback icons into the bundle
 ## (installed IDEs render their own icon at runtime via Alfred's fileicon)

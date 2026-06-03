@@ -96,10 +96,10 @@ when a newer version exists — **press ↩ on it to update in place** (no need 
 `jbup` separately). The check runs in the background about once a day.
 
 Self-update only applies to **released builds**. A build from source (`make
-build`/`make install`) reports "auto-update disabled" — update it with
-`git pull && make install` instead, so your working copy is never overwritten.
-This is controlled by a build-time `channel` flag (`dev` by default; `make dist`
-sets `release`).
+build`/`make install`) omits the in-app update UI entirely — no `jbup` keyword
+and no update banner — so update it with `git pull && make install` instead, and
+your working copy is never overwritten. This is controlled by a build-time
+`channel` flag (`dev` by default; `make dist` sets `release`).
 
 ---
 
