@@ -294,6 +294,8 @@ assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow i
 | `make install`           | symlink the bundle into Alfred                                             |
 | `make dist`              | package `dist/jb-<version>.alfredworkflow`                                 |
 | `make test` / `make vet` | `go test ./...` / `go vet ./...`                                           |
+| `make hooks`             | enable the Conventional Commits hook (`core.hooksPath=.githooks`)          |
+| `make changelog`         | regenerate `CHANGELOG.md` from commits (needs `git-cliff`)                 |
 | `make wipe-update-cache` | delete the cached release check so `jb` re-checks now (keeps pins/forgets) |
 
 `info.plist` is **generated** (deterministic UUIDv5 UIDs) — edit
@@ -302,11 +304,16 @@ assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow i
 ### Cutting a release
 
 Releases are cut entirely by GitHub Actions — there's no local release step.
-In the repo, go to **Actions → release → Run workflow** and choose the bump
-(`patch` / `minor` / `major`). The job derives the next version from the latest
-`v*` tag, builds the universal `.alfredworkflow`, commits the `VERSION` bump,
-tags it, and publishes the GitHub Release (which the in-app update banner then
-surfaces). With no tags yet, `minor` cuts `v0.1.0`.
+In the repo, go to **Actions → release → Run workflow** and choose the bump:
+**`auto`** (default) derives the next version from the [Conventional
+Commits](CONTRIBUTING.md) since the last tag (`fix` → patch, `feat` → minor,
+breaking → major), or force `patch` / `minor` / `major`. The job regenerates
+`CHANGELOG.md`, builds the universal `.alfredworkflow`, commits the version +
+changelog, tags it, and publishes a GitHub Release whose notes are that version's
+changelog section (the in-app update banner then surfaces it).
+
+Commit messages follow Conventional Commits (enforced by a hook + CI) and drive
+both the changelog and the version bump — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ![The generated workflow object graph in Alfred's editor — a Script Filter per keyword wired to shared Run Script actions](docs/img/workflow.png)
 
