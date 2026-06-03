@@ -1,0 +1,29 @@
+{
+  "workflow": {
+    "bundleid": "com.davidseptimus.jetbrains-launcher",
+    "name": "JetBrains IDE Project Launcher",
+    "description": "Open recent JetBrains IDE projects across every IDE and every installed version. Not affiliated with JetBrains.",
+    "createdby": "David Septimus",
+    "webaddress": "https://github.com/davidseptimus/alfred-jetbrains-launcher",
+    "category": "Productivity"
+  },
+  "keywords": [
+    { "keyword": "jb",        "product": "",          "title": "Open JetBrains Project", "subtext": "Search recent projects across all IDEs" },
+    { "keyword": "idea",      "product": "idea",      "title": "IntelliJ IDEA",          "subtext": "IntelliJ IDEA projects" },
+    { "keyword": "pycharm",   "product": "pycharm",   "title": "PyCharm",                "subtext": "PyCharm projects" },
+    { "keyword": "webstorm",  "product": "webstorm",  "title": "WebStorm",               "subtext": "WebStorm projects" },
+    { "keyword": "goland",    "product": "goland",    "title": "GoLand",                 "subtext": "GoLand projects" },
+    { "keyword": "clion",     "product": "clion",     "title": "CLion",                  "subtext": "CLion projects" },
+    { "keyword": "rubymine",  "product": "rubymine",  "title": "RubyMine",               "subtext": "RubyMine projects" },
+    { "keyword": "datagrip",  "product": "datagrip",  "title": "DataGrip",               "subtext": "DataGrip projects" },
+    { "keyword": "phpstorm",  "product": "phpstorm",  "title": "PhpStorm",               "subtext": "PhpStorm projects" },
+    { "keyword": "rider",     "product": "rider",     "title": "Rider",                  "subtext": "Rider projects" },
+    { "keyword": "rustrover", "product": "rustrover", "title": "RustRover",              "subtext": "RustRover projects" },
+    { "keyword": "studio",    "product": "studio",    "title": "Android Studio",         "subtext": "Android Studio projects" },
+    { "keyword": "dataspell", "product": "dataspell", "title": "DataSpell",              "subtext": "DataSpell projects" },
+    { "keyword": "aqua",      "product": "aqua",      "title": "Aqua",                   "subtext": "Aqua projects" },
+    { "keyword": "writerside","product": "writerside","title": "Writerside",             "subtext": "Writerside projects" },
+    { "keyword": "fleet",     "product": "fleet",     "title": "Fleet",                  "subtext": "Fleet workspaces" },
+    { "keyword": "air",       "product": "air",       "title": "Air",                    "subtext": "Air workspaces" }
+  ]
+}

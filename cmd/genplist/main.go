@@ -1,0 +1,523 @@
+// Command genplist generates the Alfred workflow info.plist from workflow/ides.json.
+//
+// It is regenerated rather than hand-edited because the object graph (one Script
+// Filter per keyword, shared action objects, and the connections wiring every
+// keyword to them through modifier keys) is large and easy to desync by hand.
+// UIDs are derived deterministically (UUIDv5) from the bundle id + a role, so
+// the output is stable across runs and diffs cleanly.
+package main
+
+import (
+	"crypto/sha1"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+// Alfred modifier-key bitmasks (NSEvent modifier flags).
+const (
+	modNone  = 0
+	modShift = 131072
+	modCtrl  = 262144
+	modAlt   = 524288
+	modCmd   = 1048576
+)
+
+type idesFile struct {
+	Workflow struct {
+		BundleID    string `json:"bundleid"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		CreatedBy   string `json:"createdby"`
+		WebAddress  string `json:"webaddress"`
+		Category    string `json:"category"`
+	} `json:"workflow"`
+	Keywords []struct {
+		Keyword string `json:"keyword"`
+		Product string `json:"product"`
+		Title   string `json:"title"`
+		Subtext string `json:"subtext"`
+	} `json:"keywords"`
+}
+
+func main() {
+	in := flag.String("ides", "workflow/ides.json", "path to ides.json")
+	out := flag.String("o", "info.plist", "output info.plist path")
+	version := flag.String("version", "0.0.0", "workflow version")
+	bundle := flag.String("bundle", "", "bundle dir; when set, also writes per-object <uid>.png canvas icons")
+	flag.Parse()
+
+	data, err := os.ReadFile(*in)
+	if err != nil {
+		fatal(err)
+	}
+	var spec idesFile
+	if err := json.Unmarshal(data, &spec); err != nil {
+		fatal(err)
+	}
+
+	ns := namespace(spec.Workflow.BundleID)
+	uid := func(role string) string { return uuid5(ns, spec.Workflow.BundleID+":"+role) }
+
+	// Shared modifier actions + the "pick a different IDE" drill-down. The project
+	// path reaches every action as $1 (the actioned item's arg) — the proven Alfred
+	// mechanism; we do not rely on item variables.
+	revealUID := uid("action:reveal")
+	copyUID := uid("action:copy")
+	terminalUID := uid("action:terminal")
+	pinUID := uid("action:pin")
+	forgetUID := uid("action:forget")
+	pickUID := uid("sf:pick")
+	openPickUID := uid("action:openpick")
+	updateUID := uid("sf:update")
+	updateApplyUID := uid("action:update")
+
+	var objects []any
+	var objIcons []iconRef // per-object canvas icons (uid -> family; "" = main workflow icon)
+	uidata := map[string]any{}
+
+	addUI := func(id string, x, y float64) { uidata[id] = map[string]any{"xpos": x, "ypos": y} }
+
+	objects = append(objects,
+		scriptAction(revealUID, `./jb action --do reveal --path "$1"`),
+		scriptAction(copyUID, `./jb action --do copy --path "$1"`),
+		scriptAction(terminalUID, `./jb action --do terminal --path "$1"`),
+		scriptAction(openPickUID, `./jb open --spec "$1"`),
+		// Pin/forget apply the change, then re-open Alfred on the same keyword +
+		// query (handled inside the binary) so the window stays open in place.
+		scriptAction(pinUID, `./jb pin --path "$1"`),
+		scriptAction(forgetUID, `./jb forget --path "$1"`),
+		// filterResults=false: this filter is reached by drill-down, so Alfred
+		// passes the project path as the query — we must NOT let it filter the
+		// IDE list against that path (which would hide every IDE).
+		scriptFilter(pickUID, "", `./jb ides --path "$1"`, "Open in a Different IDE", "Pick an installed IDE", false),
+		// `jbup` — check for and install a newer release of THIS workflow.
+		scriptFilter(updateUID, "jbup", `./jb update --check`, "Update This Workflow",
+			"Check GitHub for a newer version of the JetBrains IDE Project Launcher workflow (not your IDEs)", false),
+		scriptAction(updateApplyUID, `./jb update --apply`),
+	)
+	addUI(revealUID, 760, 220)
+	addUI(copyUID, 760, 360)
+	addUI(terminalUID, 760, 500)
+	addUI(pinUID, 760, 640)
+	addUI(forgetUID, 760, 780)
+	addUI(pickUID, 420, 920)
+	addUI(openPickUID, 760, 920)
+	addUI(updateUID, 420, 1060)
+	addUI(updateApplyUID, 760, 1060)
+
+	// Shared/utility objects use the main (Toolbox) icon on the canvas.
+	objIcons = append(objIcons,
+		iconRef{pickUID, ""}, iconRef{openPickUID, ""},
+		iconRef{updateUID, ""}, iconRef{updateApplyUID, ""},
+	)
+
+	connections := map[string]any{}
+
+	// pick (ides) -> open-by-spec; jbup -> update-apply.
+	connections[pickUID] = []any{conn(openPickUID, modNone)}
+	connections[updateUID] = []any{conn(updateApplyUID, modNone)}
+
+	// Each keyword's results route to its open action (↩) plus the shared
+	// reveal/pick/copy/terminal/pin/forget actions on modifier keys.
+	keyMods := func(openUID string) []any {
+		return []any{
+			conn(openUID, modNone),
+			connSub(revealUID, modCmd, "Reveal in Finder"),
+			connSub(pickUID, modAlt, "Open in a different IDE…"),
+			connSub(copyUID, modCtrl, "Copy path"),
+			connSub(terminalUID, modShift, "Open in terminal"),
+			connSub(pinUID, modCmd+modShift, "Pin / unpin"),
+			connSub(forgetUID, modCmd+modAlt, "Forget (hide)"),
+		}
+	}
+
+	// One Script Filter + dedicated open action per keyword, plus a "<keyword>~"
+	// variant that also includes git worktrees (reusing the same open + mods).
+	// The keyword family is baked into its open action; the path arrives as $1.
+	// Each keyword is read from a workflow variable (JB_KW_<NAME>) so it can be
+	// renamed in the Configure Workflow panel and survive updates (unlike editing
+	// the node directly, which an import/regenerate would overwrite). The live
+	// keyword is also passed to the binary via --keyword so pin/forget can re-open
+	// Alfred on the renamed keyword.
+	y := 40.0
+	var kwConfig []any
+	for _, k := range spec.Keywords {
+		sfUID := uid("sf:" + k.Keyword)
+		openUID := uid("action:open:" + k.Keyword)
+		kwVar := "JB_KW_" + strings.ToUpper(k.Keyword)
+		kwRef := "{var:" + kwVar + "}"
+		base := `./jb search`
+		if k.Product != "" {
+			base += ` --product ` + k.Product
+		}
+		openScript := `./jb open --product "` + k.Product + `" --path "$1"`
+		objects = append(objects,
+			scriptFilter(sfUID, kwRef, base+` --keyword "`+kwRef+`" --query "$1"`, k.Title, k.Subtext, true),
+			scriptAction(openUID, openScript),
+		)
+		// Canvas icons: the keyword + its open action show the IDE's icon
+		// (the unified `jb` keyword, product "", uses the main workflow icon).
+		objIcons = append(objIcons, iconRef{sfUID, k.Product}, iconRef{openUID, k.Product})
+		addUI(sfUID, 50, y)
+		addUI(openUID, 980, y)
+		connections[sfUID] = keyMods(openUID)
+
+		// `<keyword>~` — same search, but including git worktrees.
+		wtUID := uid("sf:" + k.Keyword + "~")
+		objects = append(objects, scriptFilter(wtUID, kwRef+"~",
+			base+` --worktrees --keyword "`+kwRef+`~" --query "$1"`, k.Title+" (+ worktrees)",
+			k.Subtext+", including git worktrees", true))
+		objIcons = append(objIcons, iconRef{wtUID, k.Product})
+		addUI(wtUID, 290, y)
+		connections[wtUID] = keyMods(openUID)
+
+		kwConfig = append(kwConfig, keywordField(kwVar, k.Keyword, k.Title))
+		y += 120
+	}
+
+	plist := map[string]any{
+		"bundleid":                spec.Workflow.BundleID,
+		"name":                    spec.Workflow.Name,
+		"description":             spec.Workflow.Description,
+		"createdby":               spec.Workflow.CreatedBy,
+		"webaddress":              spec.Workflow.WebAddress,
+		"category":                spec.Workflow.Category,
+		"version":                 *version,
+		"disabled":                false,
+		"readme":                  readme,
+		"objects":                 objects,
+		"connections":             connections,
+		"uidata":                  uidata,
+		"variablesdontexport":     []any{},
+		"userconfigurationconfig": append(userConfig(), kwConfig...),
+	}
+
+	var buf strings.Builder
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	buf.WriteString(`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n")
+	buf.WriteString(`<plist version="1.0">` + "\n")
+	encode(&buf, plist, 0)
+	buf.WriteString("\n</plist>\n")
+
+	if err := os.WriteFile(*out, []byte(buf.String()), 0o644); err != nil {
+		fatal(err)
+	}
+	fmt.Printf("wrote %s (%d keywords)\n", *out, len(spec.Keywords))
+
+	if *bundle != "" {
+		n := writeObjectIcons(*bundle, objIcons)
+		fmt.Printf("wrote %d per-object canvas icons into %s\n", n, *bundle)
+	}
+}
+
+type iconRef struct {
+	uid    string
+	family string // "" means use the main workflow icon (icon.png)
+}
+
+// uidIconRe matches a per-object canvas icon file (a deterministic UUID + .png).
+var uidIconRe = regexp.MustCompile(`^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}\.png$`)
+
+// pruneObjectIcons removes every existing per-object canvas icon from the bundle
+// root so icons for renamed/removed objects (or objects whose family icon was
+// dropped) don't linger across builds. The current set is rewritten right after.
+func pruneObjectIcons(bundle string) {
+	entries, err := os.ReadDir(bundle)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() && uidIconRe.MatchString(e.Name()) {
+			_ = os.Remove(filepath.Join(bundle, e.Name()))
+		}
+	}
+}
+
+// writeObjectIcons gives each object its own canvas icon by copying the matching
+// family icon to <bundle>/<uid>.png (Alfred's per-object icon convention).
+func writeObjectIcons(bundle string, refs []iconRef) int {
+	pruneObjectIcons(bundle) // clear stale per-object icons from earlier builds
+	n := 0
+	for _, r := range refs {
+		src := filepath.Join(bundle, "icons", r.family+".png")
+		if r.family == "" {
+			src = filepath.Join(bundle, "icon.png")
+		}
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue // icon not present for this family; Alfred falls back to the workflow icon
+		}
+		if err := os.WriteFile(filepath.Join(bundle, r.uid+".png"), data, 0o644); err == nil {
+			n++
+		}
+	}
+	return n
+}
+
+func scriptFilter(uid, keyword, script, title, subtext string, filterResults bool) map[string]any {
+	cfg := map[string]any{
+		"alfredfiltersresults":           filterResults,
+		"alfredfiltersresultsmatchmode":  2,
+		"argumenttreatemptyqueryasnil":   false,
+		"argumenttrimmode":               0,
+		"argumenttype":                   1,
+		"escaping":                       102,
+		"keyword":                        keyword,
+		"queuedelaycustom":               3,
+		"queuedelayimmediatelyinitially": true,
+		"queuedelaymode":                 0,
+		"queuemode":                      1,
+		"runningsubtext":                 "Searching projects…",
+		"script":                         script,
+		"scriptargtype":                  1,
+		"scriptfile":                     "",
+		"subtext":                        subtext,
+		"title":                          title,
+		"type":                           5,
+		"withspace":                      true,
+	}
+	return map[string]any{
+		"config":  cfg,
+		"type":    "alfred.workflow.input.scriptfilter",
+		"uid":     uid,
+		"version": 3,
+	}
+}
+
+func scriptAction(uid, script string) map[string]any {
+	return map[string]any{
+		"config": map[string]any{
+			"concurrently":  false,
+			"escaping":      102,
+			"script":        script,
+			"scriptargtype": 1,
+			"scriptfile":    "",
+			"type":          5,
+		},
+		"type":    "alfred.workflow.action.script",
+		"uid":     uid,
+		"version": 2,
+	}
+}
+
+func conn(dest string, mod int) map[string]any {
+	return map[string]any{
+		"destinationuid":  dest,
+		"modifiers":       mod,
+		"modifiersubtext": "",
+		"vitoclose":       false,
+	}
+}
+
+func connSub(dest string, mod int, subtext string) map[string]any {
+	c := conn(dest, mod)
+	c["modifiersubtext"] = subtext
+	return c
+}
+
+// keywordField builds a Configure-Workflow text field that overrides one
+// keyword. The default is the built-in keyword; clearing the field disables that
+// keyword's trigger.
+func keywordField(variable, def, title string) map[string]any {
+	return map[string]any{
+		"type":        "textfield",
+		"variable":    variable,
+		"label":       title + " keyword",
+		"description": "Alfred keyword that triggers " + title + " (its `~` worktree variant follows it). Clear to disable.",
+		"config": map[string]any{
+			"default":     def,
+			"placeholder": "",
+			"required":    false,
+			"trim":        true,
+		},
+	}
+}
+
+func userConfig() []any {
+	tf := func(variable, label, desc, def string) map[string]any {
+		return map[string]any{
+			"type":        "textfield",
+			"variable":    variable,
+			"label":       label,
+			"description": desc, // examples live here, not in a misleading placeholder
+			"config": map[string]any{
+				"default":     def,
+				"placeholder": "",
+				"required":    false,
+				"trim":        true,
+			},
+		}
+	}
+	worktreeCheckbox := map[string]any{
+		"type":        "checkbox",
+		"variable":    "JB_EXCLUDE_WORKTREES",
+		"label":       "Worktrees",
+		"description": "Linked git worktrees are hidden from results when checked.",
+		"config": map[string]any{
+			"default": true,
+			"text":    "Exclude git worktrees",
+		},
+	}
+	terminalPopup := map[string]any{
+		"type":        "popupbutton",
+		"variable":    "JB_TERMINAL",
+		"label":       "Terminal app",
+		"description": "App used by the ⇧ (open in terminal) action.",
+		"config": map[string]any{
+			"default": "Terminal",
+			"pairs": []any{
+				[]any{"Terminal", "Terminal"},
+				[]any{"iTerm", "iTerm"},
+				[]any{"Warp", "Warp"},
+				[]any{"Ghostty", "Ghostty"},
+				[]any{"WezTerm", "WezTerm"},
+				[]any{"kitty", "kitty"},
+				[]any{"Alacritty", "Alacritty"},
+				[]any{"Hyper", "Hyper"},
+			},
+		},
+	}
+	sortPopup := map[string]any{
+		"type":        "popupbutton",
+		"variable":    "JB_SORT",
+		"label":       "Sort order",
+		"description": "Order of results. Alfred re-ranks by relevance once you type a query.",
+		"config": map[string]any{
+			"default": "recency",
+			"pairs": []any{
+				[]any{"Most recently used first", "recency"},
+				[]any{"Least recently used first", "recency-asc"},
+				[]any{"Name (A–Z)", "name"},
+				[]any{"Name (Z–A)", "name-desc"},
+				[]any{"Path (A–Z)", "path"},
+			},
+		},
+	}
+	// The path fields are pre-populated with their defaults so the values are
+	// always visible and editable; the binary falls back to the same defaults if
+	// a field is cleared.
+	return []any{
+		worktreeCheckbox,
+		terminalPopup,
+		sortPopup,
+		tf("JB_IGNORE_CONTENT", "Ignore content",
+			"Comma-separated entry-name globs treated as non-content; a project whose only contents are these (or hidden files) is hidden as a stub.",
+			"build,dist,node_modules"),
+		tf("JB_IGNORE_PROJECTS", "Ignore projects",
+			"Comma-separated globs matched against a project's name and full path; matches are hidden. For example: *-scratch, ~/Downloads/*",
+			""),
+		tf("JB_CONFIG_ROOTS", "Config roots",
+			"Colon-separated dirs holding per-version IDE config dirs (JetBrains & Google). Clear to restore the defaults.",
+			"~/Library/Application Support/JetBrains:~/Library/Application Support/Google"),
+		tf("JB_APP_ROOTS", "Application folders",
+			"Colon-separated folders scanned for JetBrains .app bundles. Clear to restore the defaults.",
+			"/Applications:~/Applications"),
+		tf("JB_TOOLBOX_DIR", "Toolbox script dirs",
+			"Colon-separated dirs holding JetBrains Toolbox launcher scripts. Clear to restore the default.",
+			"~/Library/Application Support/JetBrains/Toolbox/scripts"),
+	}
+}
+
+const readme = `# JetBrains IDE Project Launcher
+
+Search and open your recent JetBrains projects across **all** installed IDEs and
+**all** installed versions.
+
+- ` + "`jb`" + ` — search every recent project; each opens in the IDE it was last used in.
+- per-IDE keywords (` + "`idea`, `pycharm`, `goland`, …" + `) — limit to one IDE.
+- append ` + "`~`" + ` to any keyword (` + "`jb~`, `goland~`" + `) to include git worktrees.
+
+Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌘⇧ pin/unpin · ⌘⌥ forget.
+
+---
+Not affiliated with or endorsed by JetBrains. IDE logos are trademarks of their
+respective owners, used for identification only. MIT-licensed (code).`
+
+// --- deterministic UID (UUIDv5) ---
+
+func namespace(seed string) [16]byte {
+	// A fixed namespace UUID for this workflow family.
+	return [16]byte{0x6b, 0x2f, 0x1a, 0x9c, 0x4d, 0x8e, 0x5f, 0x70, 0x91, 0xa2, 0xb3, 0xc4, 0xd5, 0xe6, 0xf7, 0x08}
+}
+
+func uuid5(ns [16]byte, name string) string {
+	h := sha1.New()
+	h.Write(ns[:])
+	h.Write([]byte(name))
+	s := h.Sum(nil)
+	var u [16]byte
+	copy(u[:], s[:16])
+	u[6] = (u[6] & 0x0f) | 0x50 // version 5
+	u[8] = (u[8] & 0x3f) | 0x80 // RFC 4122 variant
+	return fmt.Sprintf("%X-%X-%X-%X-%X", u[0:4], u[4:6], u[6:8], u[8:10], u[10:16])
+}
+
+// --- minimal plist encoder ---
+
+func encode(b *strings.Builder, v any, indent int) {
+	pad := strings.Repeat("\t", indent)
+	switch val := v.(type) {
+	case string:
+		fmt.Fprintf(b, "%s<string>%s</string>", pad, esc(val))
+	case bool:
+		if val {
+			fmt.Fprintf(b, "%s<true/>", pad)
+		} else {
+			fmt.Fprintf(b, "%s<false/>", pad)
+		}
+	case int:
+		fmt.Fprintf(b, "%s<integer>%d</integer>", pad, val)
+	case float64:
+		fmt.Fprintf(b, "%s<real>%g</real>", pad, val)
+	case []any:
+		if len(val) == 0 {
+			fmt.Fprintf(b, "%s<array/>", pad)
+			return
+		}
+		fmt.Fprintf(b, "%s<array>\n", pad)
+		for i, e := range val {
+			encode(b, e, indent+1)
+			if i < len(val)-1 {
+				b.WriteString("\n")
+			}
+		}
+		fmt.Fprintf(b, "\n%s</array>", pad)
+	case map[string]any:
+		if len(val) == 0 {
+			fmt.Fprintf(b, "%s<dict/>", pad)
+			return
+		}
+		fmt.Fprintf(b, "%s<dict>\n", pad)
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for i, k := range keys {
+			fmt.Fprintf(b, "%s\t<key>%s</key>\n", pad, esc(k))
+			encode(b, val[k], indent+1)
+			if i < len(keys)-1 {
+				b.WriteString("\n")
+			}
+		}
+		fmt.Fprintf(b, "\n%s</dict>", pad)
+	default:
+		panic(fmt.Sprintf("unsupported plist type %T", v))
+	}
+}
+
+func esc(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	return r.Replace(s)
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "genplist:", err)
+	os.Exit(1)
+}

@@ -1,0 +1,81 @@
+name: release
+
+# Cut a release from GitHub: Actions → "release" → Run workflow, pick the bump.
+# The job derives the next version from the latest v* tag, builds the universal
+# .alfredworkflow, commits the VERSION bump, tags it, and publishes the release.
+# (Runs on macOS for sips/iconutil/lipo/codesign.)
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags, so the version can be derived
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Determine next version
+        id: ver
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          latest="$(git tag -l 'v*' --sort=-v:refname | head -1)"
+          latest="${latest:-v0.0.0}"
+          IFS=. read -r major minor patch <<< "${latest#v}"
+          case "$BUMP" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+          esac
+          new="${major}.${minor}.${patch}"
+          tag="v${new}"
+          if git rev-parse "$tag" >/dev/null 2>&1; then
+            echo "::error::tag $tag already exists"; exit 1
+          fi
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $latest -> $tag ($BUMP)"
+
+      - name: Build and package
+        # Build before tagging so a build failure leaves no orphan tag. The
+        # version is passed explicitly; icons fall back to the vendored set since
+        # no JetBrains apps are installed on the runner.
+        run: make dist VERSION="${{ steps.ver.outputs.version }}"
+
+      - name: Commit version bump and tag
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "$VERSION" > VERSION
+          git add VERSION
+          if git diff --cached --quiet; then
+            echo "VERSION is already $VERSION — tagging the current commit."
+          else
+            git commit -m "Release $TAG"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: gh release create "$TAG" dist/*.alfredworkflow --title "$TAG" --generate-notes

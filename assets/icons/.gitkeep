@@ -1,0 +1,4 @@
+# Vendored fallback per-IDE icons live here (e.g. idea.png, goland.png, default.png).
+# They are copied into the bundle first; icons extracted from installed apps then
+# overlay them. Shipping a full set here makes the distributable deterministic on
+# machines that don't have every IDE installed.

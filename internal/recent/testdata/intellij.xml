@@ -1,0 +1,35 @@
+<application>
+  <component name="RecentProjectsManager">
+    <option name="additionalInfo">
+      <map>
+        <entry key="$USER_HOME$/IdeaProjects/alpha">
+          <value>
+            <RecentProjectMetaInfo frameTitle="alpha [~/IdeaProjects/alpha]" projectWorkspaceId="w1">
+              <option name="activationTimestamp" value="1779308608268" />
+              <option name="build" value="IU-261.24374.151" />
+              <option name="productionCode" value="IU" />
+              <option name="projectOpenTimestamp" value="1779302868173" />
+            </RecentProjectMetaInfo>
+          </value>
+        </entry>
+        <entry key="$USER_HOME$/IdeaProjects/beta">
+          <value>
+            <RecentProjectMetaInfo frameTitle="beta [~/IdeaProjects/beta]" projectWorkspaceId="w2">
+              <option name="projectOpenTimestamp" value="1700000000000" />
+            </RecentProjectMetaInfo>
+          </value>
+        </entry>
+        <entry key="/$devcontainer.ij/abc123@u~var~run~docker.sock/IdeaProjects/remote-proj">
+          <value>
+            <RecentProjectMetaInfo frameTitle="remote-proj" projectWorkspaceId="w3">
+              <option name="productionCode" value="IU" />
+              <option name="projectOpenTimestamp" value="1779000000000" />
+            </RecentProjectMetaInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+    <option name="lastOpenedProject" value="$USER_HOME$/IdeaProjects/gamma" />
+    <option name="lastProjectLocation" value="$USER_HOME$/IdeaProjects" />
+  </component>
+</application>
