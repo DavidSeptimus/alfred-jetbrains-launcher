@@ -516,26 +516,44 @@ func updateCheck() {
 }
 
 func updateApply() {
+	// The Script Filter window is already gone by the time this runs, so notify
+	// the user that their ↩ registered and that a download is underway. Alfred's
+	// import sheet (from the `open` below) is the success signal; the failure
+	// notifications below cover the paths that would otherwise fail silently.
+	notify("JetBrains Launcher", "Downloading the update…")
 	rel, err := update.Latest()
 	if err != nil {
+		notify("Update failed", "Couldn't reach GitHub — "+err.Error())
 		fail("update: " + err.Error())
 	}
 	url, ok := rel.WorkflowAsset()
 	if !ok {
 		// No packaged asset — open the release page so the user can grab it.
+		notify("Update", "No downloadable asset — opening the release page")
 		_ = exec.Command("open", rel.HTMLURL).Run()
 		fail("update: latest release has no .alfredworkflow asset (opened release page)")
 	}
 	path, err := update.Download(url)
 	if err != nil {
+		notify("Update failed", "Download error — "+err.Error())
 		fail("update: " + err.Error())
 	}
 	// Opening the .alfredworkflow hands it to Alfred, which imports it in place
 	// (same bundle id), preserving config + pins/forgets.
 	if err := exec.Command("open", path).Run(); err != nil {
+		notify("Update failed", err.Error())
 		fail("update: " + err.Error())
 	}
 	fmt.Printf("downloaded %s, importing…\n", rel.TagName)
+}
+
+// notify posts a best-effort macOS notification via osascript. Used for
+// self-update progress/failures, where the Script Filter window has already
+// closed so there is no Alfred row left to carry the message. Errors are ignored
+// (notifications may be disabled); it appears under the script runner's name.
+func notify(title, message string) {
+	script := "display notification " + applescriptQuote(message) + " with title " + applescriptQuote(title)
+	_ = exec.Command("osascript", "-e", script).Run()
 }
 
 // infoIcon is an update-related row carrying the workflow's own (Toolbox) icon,
