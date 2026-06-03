@@ -9,6 +9,13 @@ install) silently disappear. JetBrains also caps each `recentProjects.xml` at
 ~50 entries. This workflow merges **all** of them, so your projects actually
 show up.
 
+The flip side of "show everything" is noise, which is the other reason this
+exists: JetBrains' recent list fills up with linked git **worktrees** and
+projects whose folders you've since **deleted** — entries you'd never want to
+launch. The workflow hides those by default (worktrees are one keystroke away
+when you *do* want them), so the list stays to the projects you'd actually
+reopen.
+
 > Not affiliated with, sponsored by, or endorsed by JetBrains. See
 > [Trademarks](#trademarks--attribution).
 
@@ -33,8 +40,9 @@ show up.
 - **Pin & forget** — pin frequent projects to the top (★), or forget ones you
   don't want cluttering the list (reversible; never touches JetBrains' files).
 - **Git branch** shown inline for projects in a git checkout.
-- **Fast** — a single static Go binary with a mtime-keyed cache; no runtime
-  dependencies.
+- **Native & open source** — one static Go binary with an mtime-keyed cache:
+  fast, no Python or Node runtime to install, nothing else to set up, and
+  [MIT-licensed](LICENSE) end to end.
 
 ---
 
