@@ -32,8 +32,9 @@ reopen.
   if a different version of that IDE is already running, it reuses it.
 - **Unified + per-IDE keywords** — `jb` for everything, or `idea` / `goland` /
   `pycharm` / … to scope to one IDE.
-- **Quick actions** — reveal in Finder, copy path, open in a terminal, or pick a
-  different IDE, all from modifier keys.
+- **Quick actions** — reveal in Finder, copy path, open in a terminal, pick a
+  different IDE, or run your own open command (VS Code, Cursor, …), all from
+  modifier keys.
 - **Tidy by default** — hides stale entries whose folder is gone, stub dirs with
   no visible files (only leftover `.idea`/`.git`/dotfiles), and linked git
   worktrees (with an opt-in to show them).
@@ -130,6 +131,7 @@ components, so `jb webfoo` finds `~/work/web/foo`.
 | ⌥   | Open in a different IDE (pick from installed)                                |
 | ⌃   | Copy project path                                                            |
 | ⇧   | Open in terminal (configurable app)                                          |
+| ⌃⇧  | Open with a custom command (`JB_OPEN_CMD`, e.g. VS Code) — off until set     |
 | ⌘⇧  | Pin / unpin (pinned float to the top, marked ★) — stays open, list refreshes |
 | ⌘⌥  | Forget — hide from the launcher (stays open; `jb forget --clear` restores)   |
 
@@ -164,20 +166,42 @@ Open **Configure Workflow…** in Alfred:
 
 ![The Configure Workflow panel — worktrees, terminal app, sort order, ignore patterns, and path overrides](docs/img/configure.png)
 
-| Setting               | Variable               | Default                          | Effect                                                                                                                                   |
-|-----------------------|------------------------|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| Exclude git worktrees | `JB_EXCLUDE_WORKTREES` | on                               | Hide linked git worktrees (use `<keyword>~` to include per-search)                                                                       |
-| Terminal app          | `JB_TERMINAL`          | Terminal                         | App for the ⇧ open-in-terminal action (iTerm, Warp, Ghostty, …)                                                                          |
-| Sort order            | `JB_SORT`              | Most recent first                | Result order: recency / least-recent / name (A–Z, Z–A) / path. Alfred re-ranks by relevance once you type a query                        |
-| Ignore content        | `JB_IGNORE_CONTENT`    | `build,dist,node_modules`        | Comma-separated entry-name globs treated as non-content. A project whose only contents are these (plus hidden files) is hidden as a stub |
-| Ignore projects       | `JB_IGNORE_PROJECTS`   | _(none)_                         | Comma-separated globs matched against a project's name and full path; matches are hidden (e.g. `*-scratch`, `~/Downloads/*`)             |
-| Config roots          | `JB_CONFIG_ROOTS`      | standard JetBrains & Google dirs | `:`-separated dirs holding per-version IDE config dirs                                                                                   |
-| Application folders   | `JB_APP_ROOTS`         | `/Applications:~/Applications`   | `:`-separated folders scanned for JetBrains `.app` bundles                                                                               |
-| Toolbox script dirs   | `JB_TOOLBOX_DIR`       | standard Toolbox scripts dir     | `:`-separated dirs of Toolbox launcher scripts                                                                                           |
+| Setting               | Variable               | Default                          | Effect                                                                                                                                         |
+|-----------------------|------------------------|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| Exclude git worktrees | `JB_EXCLUDE_WORKTREES` | on                               | Hide linked git worktrees (use `<keyword>~` to include per-search)                                                                             |
+| Terminal app          | `JB_TERMINAL`          | Terminal                         | App for the ⇧ open-in-terminal action (iTerm, Warp, Ghostty, …)                                                                                |
+| Custom open command   | `JB_OPEN_CMD`          | _(none)_                         | Command for the ⌃⇧ action; `{path}` → project path (quoted for you). Runs in your login shell. See [Custom open command](#custom-open-command) |
+| Sort order            | `JB_SORT`              | Most recent first                | Result order: recency / least-recent / name (A–Z, Z–A) / path. Alfred re-ranks by relevance once you type a query                              |
+| Ignore content        | `JB_IGNORE_CONTENT`    | `build,dist,node_modules`        | Comma-separated entry-name globs treated as non-content. A project whose only contents are these (plus hidden files) is hidden as a stub       |
+| Ignore projects       | `JB_IGNORE_PROJECTS`   | _(none)_                         | Comma-separated globs matched against a project's name and full path; matches are hidden (e.g. `*-scratch`, `~/Downloads/*`)                   |
+| Config roots          | `JB_CONFIG_ROOTS`      | standard JetBrains & Google dirs | `:`-separated dirs holding per-version IDE config dirs                                                                                         |
+| Application folders   | `JB_APP_ROOTS`         | `/Applications:~/Applications`   | `:`-separated folders scanned for JetBrains `.app` bundles                                                                                     |
+| Toolbox script dirs   | `JB_TOOLBOX_DIR`       | standard Toolbox scripts dir     | `:`-separated dirs of Toolbox launcher scripts                                                                                                 |
 
 The path fields are **pre-filled with their defaults**, so you can see and edit
 the exact values; clear a field to restore its default. `jb doctor` prints the
 resolved list.
+
+### Custom open command
+
+`↩` always opens the resolved JetBrains IDE; **⌃⇧** runs whatever you put in
+`JB_OPEN_CMD` instead — open the project in a different editor, a terminal
+multiplexer, or your own script. Two tokens are substituted (both already quoted,
+so leave them bare): **`{path}`** → the project path, **`{name}`** → its folder
+name. With no `{path}` token the path is appended as the last argument. The
+command runs in your **login shell**, so anything on your `PATH` resolves — and
+since it's just a shell line, a path to a script works too.
+
+| Tool                                                          | `JB_OPEN_CMD`                                   |
+|---------------------------------------------------------------|-------------------------------------------------|
+| VS Code                                                       | `code {path}`                                   |
+| Cursor                                                        | `cursor {path}`                                 |
+| Zed                                                           | `zed {path}`                                    |
+| [cmux](https://github.com/manaflow-ai/cmux) (named workspace) | `cmux new-workspace --name {name} --cwd {path}` |
+| Your own script                                               | `~/bin/open-project.sh {name} {path}`           |
+
+Until you set it, the ⌃⇧ row stays visible but inert (it tells you to configure
+it). If a CLI isn't on your login-shell `PATH`, use its absolute path.
 
 ### Keywords
 
@@ -253,24 +277,24 @@ cmd/genplist      generates info.plist + per-object canvas icons from workflow/i
 internal/discover find every recent file across all version dirs
 internal/recent   parse + merge/dedupe (worktree, .idea-only, existence checks)
 internal/ide      product catalogue, installed-IDE detection, resolution, running check
-internal/launch   open / reveal / copy / terminal
+internal/launch   open / reveal / copy / terminal / custom open command
 internal/alfred   Script Filter JSON
 internal/cache    mtime-keyed cache of the merged list
 workflow/ides.json  the IDE/keyword table that drives the generated plist
 assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow icon
 ```
 
-| Target                                    | Does                                                                                            |
-|-------------------------------------------|-------------------------------------------------------------------------------------------------|
-| `make build`                              | arm64 binary into the bundle (fast dev)                                                         |
-| `make build-universal`                    | fat arm64+amd64 binary (releases)                                                               |
-| `make plist`                              | regenerate `info.plist` + per-object icons                                                      |
-| `make icons`                              | stage the vendored fallback icons into the bundle                                               |
-| `make bundle`                             | assemble + ad-hoc codesign + de-quarantine                                                      |
-| `make install`                            | symlink the bundle into Alfred                                                                  |
-| `make dist`                               | package `dist/jb-<version>.alfredworkflow`                                                      |
-| `make test` / `make vet`                  | `go test ./...` / `go vet ./...`                                                                |
-| `make wipe-update-cache`                  | delete the cached release check so `jb` re-checks now (keeps pins/forgets)                       |
+| Target                   | Does                                                                       |
+|--------------------------|----------------------------------------------------------------------------|
+| `make build`             | arm64 binary into the bundle (fast dev)                                    |
+| `make build-universal`   | fat arm64+amd64 binary (releases)                                          |
+| `make plist`             | regenerate `info.plist` + per-object icons                                 |
+| `make icons`             | stage the vendored fallback icons into the bundle                          |
+| `make bundle`            | assemble + ad-hoc codesign + de-quarantine                                 |
+| `make install`           | symlink the bundle into Alfred                                             |
+| `make dist`              | package `dist/jb-<version>.alfredworkflow`                                 |
+| `make test` / `make vet` | `go test ./...` / `go vet ./...`                                           |
+| `make wipe-update-cache` | delete the cached release check so `jb` re-checks now (keeps pins/forgets) |
 
 `info.plist` is **generated** (deterministic UUIDv5 UIDs) — edit
 `workflow/ides.json`, not the plist.

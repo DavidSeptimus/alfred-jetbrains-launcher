@@ -53,3 +53,51 @@ func TestRevealAndTerminalArgv(t *testing.T) {
 		t.Errorf("terminal default argv: %q", got)
 	}
 }
+
+func TestOpenCommand(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh") // deterministic shell for the argv assertion
+
+	// {path} token is replaced with the single-quoted path (space-safe).
+	got := captureArgv(t, func() {
+		if err := OpenCommand("code {path}", "/Users/dave/My Project"); err != nil {
+			t.Fatal(err)
+		}
+	})
+	want := []string{"/bin/zsh", "-lc", `code '/Users/dave/My Project'`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("token argv:\n got %q\nwant %q", got, want)
+	}
+
+	// No {path} token: the quoted path is appended as the final argument.
+	got = captureArgv(t, func() { _ = OpenCommand("code", "/x") })
+	if !reflect.DeepEqual(got, []string{"/bin/zsh", "-lc", `code '/x'`}) {
+		t.Errorf("append argv: %q", got)
+	}
+
+	// A single quote in the path is escaped, not left to break out of the quoting.
+	got = captureArgv(t, func() { _ = OpenCommand("code {path}", "/a/b'c") })
+	if !reflect.DeepEqual(got, []string{"/bin/zsh", "-lc", `code '/a/b'\''c'`}) {
+		t.Errorf("escape argv: %q", got)
+	}
+
+	// {name} → the project's folder name (quoted), alongside {path}.
+	got = captureArgv(t, func() {
+		_ = OpenCommand("cmux new-workspace --name {name} --cwd {path}", "/Users/dave/My Project")
+	})
+	want = []string{"/bin/zsh", "-lc", `cmux new-workspace --name 'My Project' --cwd '/Users/dave/My Project'`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("name+path argv:\n got %q\nwant %q", got, want)
+	}
+
+	// A script path works like any other command; {name}/{path} substitute the same.
+	got = captureArgv(t, func() { _ = OpenCommand("~/bin/open-project.sh {name} {path}", "/u/My App") })
+	if !reflect.DeepEqual(got, []string{"/bin/zsh", "-lc", `~/bin/open-project.sh 'My App' '/u/My App'`}) {
+		t.Errorf("script argv: %q", got)
+	}
+}
+
+func TestOpenCommandEmptyErrors(t *testing.T) {
+	if err := OpenCommand("   ", "/x"); err == nil {
+		t.Error("OpenCommand with a blank template should error")
+	}
+}

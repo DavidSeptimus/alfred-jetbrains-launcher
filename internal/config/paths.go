@@ -24,6 +24,7 @@ type Config struct {
 	DataDir          string   // durable per-workflow state (pins, hidden list)
 	ExcludeWorktrees bool     // hide linked git worktrees from results (default true)
 	Terminal         string   // app name used by the "open in terminal" action
+	OpenCmd          string   // user command for the ⌃⇧ custom-open action ({path} = project)
 	IgnoreContent    []string // entry-name globs treated as non-content for stub detection
 	IgnoreProjects   []string // path/name globs; matching projects are hidden
 	Sort             string   // result order: recency|recency-asc|name|name-desc|path
@@ -40,6 +41,7 @@ const (
 	envAlfredCache = "alfred_workflow_cache"
 	envExcludeWT   = "JB_EXCLUDE_WORKTREES" // "0"/"false" to include git worktrees
 	envTerminal    = "JB_TERMINAL"          // app name for the "open in terminal" action
+	envOpenCmd     = "JB_OPEN_CMD"          // custom shell command for the ⌃⇧ open action
 	envAlfredData  = "alfred_workflow_data"
 	envDataDir     = "JB_DATA_DIR"       // overrides the durable data directory
 	envIgnoreCont  = "JB_IGNORE_CONTENT" // comma-separated entry-name globs
@@ -138,6 +140,10 @@ func Load() Config {
 	if cfg.Terminal == "" {
 		cfg.Terminal = "Terminal"
 	}
+
+	// Custom open command (⌃⇧). Empty by default — the action stays inert until
+	// the user sets one (e.g. "code {path}").
+	cfg.OpenCmd = strings.TrimSpace(os.Getenv(envOpenCmd))
 
 	cfg.IgnoreContent = parseList(envIgnoreCont, defaultIgnoreContent)
 	cfg.IgnoreProjects = parseList(envIgnoreProj, nil)

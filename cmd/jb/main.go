@@ -208,12 +208,13 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag bool, ke
 			Icon:     iconForFamily(family, installed),
 			Valid:    alfred.BoolPtr(found),
 			Mods: map[string]alfred.Mod{
-				"cmd":       {Subtitle: "Reveal in Finder"},
-				"alt":       {Subtitle: "Open in a different IDE…"},
-				"ctrl":      {Subtitle: "Copy path to clipboard"},
-				"shift":     {Subtitle: "Open in terminal"},
-				"cmd+shift": {Subtitle: pinLabel},
-				"cmd+alt":   {Subtitle: "Forget (hide from this list)"},
+				"cmd":        {Subtitle: "Reveal in Finder"},
+				"alt":        {Subtitle: "Open in a different IDE…"},
+				"ctrl":       {Subtitle: "Copy path to clipboard"},
+				"shift":      {Subtitle: "Open in terminal"},
+				"ctrl+shift": openCmdMod(cfg.OpenCmd),
+				"cmd+shift":  {Subtitle: pinLabel},
+				"cmd+alt":    {Subtitle: "Forget (hide from this list)"},
 			},
 		}
 		if pinnedNow {
@@ -259,7 +260,8 @@ func updateBanner(cfg config.Config, product string) (alfred.Item, bool) {
 	no := alfred.BoolPtr(false)
 	item.Mods = map[string]alfred.Mod{
 		"cmd": {Valid: no}, "alt": {Valid: no}, "ctrl": {Valid: no},
-		"shift": {Valid: no}, "cmd+shift": {Valid: no}, "cmd+alt": {Valid: no},
+		"shift": {Valid: no}, "ctrl+shift": {Valid: no},
+		"cmd+shift": {Valid: no}, "cmd+alt": {Valid: no},
 	}
 	return item, true
 }
@@ -381,6 +383,8 @@ func cmdAction(args []string) {
 		err = launch.CopyPath(*path)
 	case "terminal":
 		err = launch.Terminal(config.Load().Terminal, *path)
+	case "command":
+		err = launch.OpenCommand(config.Load().OpenCmd, *path)
 	default:
 		fail(fmt.Sprintf("action: unknown --do %q", *do))
 	}
@@ -643,6 +647,31 @@ func cmdDoctor() {
 	line("  hidden — worktree:     %d (use <keyword>~ to show)", worktrees)
 	line("  hidden — forgotten:    %d", hidden)
 	line("  pinned:                %d", len(st.Pinned))
+}
+
+// openCmdMod renders the ⌃⇧ custom-open modifier. With a command configured it
+// opens the project through it, labelled by the command's program (e.g. "Open in
+// code"); with none set the row is inert and hints at configuring it.
+func openCmdMod(cmd string) alfred.Mod {
+	cmd = strings.TrimSpace(cmd)
+	if cmd == "" {
+		return alfred.Mod{
+			Subtitle: "Set a custom open command in the workflow config (e.g. code {path})",
+			Valid:    alfred.BoolPtr(false),
+		}
+	}
+	return alfred.Mod{Subtitle: "Open in " + openCmdName(cmd)}
+}
+
+// openCmdName derives a friendly program name from a command template: the base
+// name of its first whitespace-separated token (e.g. "code {path}" → "code",
+// "/usr/local/bin/cursor --new-window" → "cursor").
+func openCmdName(cmd string) string {
+	fields := strings.Fields(cmd)
+	if len(fields) == 0 {
+		return "custom command"
+	}
+	return filepath.Base(fields[0])
 }
 
 // iconForFamily renders an installed IDE's own live icon via Alfred's fileicon

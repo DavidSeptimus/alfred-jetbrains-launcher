@@ -76,6 +76,7 @@ func main() {
 	revealUID := uid("action:reveal")
 	copyUID := uid("action:copy")
 	terminalUID := uid("action:terminal")
+	customCmdUID := uid("action:command")
 	pinUID := uid("action:pin")
 	forgetUID := uid("action:forget")
 	pickUID := uid("sf:pick")
@@ -99,6 +100,10 @@ func main() {
 		scriptAction(revealUID, `./jb action --do reveal --path "$1"`),
 		scriptAction(copyUID, `./jb action --do copy --path "$1"`),
 		scriptAction(terminalUID, `./jb action --do terminal --path "$1"`),
+		// Custom open command (⌃⇧): runs the user's JB_OPEN_CMD template (e.g.
+		// `code {path}`). The binary reads the template + path and runs it in the
+		// login shell; this node only forwards the path.
+		scriptAction(customCmdUID, `./jb action --do command --path "$1"`),
 		scriptAction(openPickUID, `./jb open --spec "$1"`),
 		// Pin/forget apply the change, then re-open Alfred on the same keyword +
 		// query (handled inside the binary) so the window stays open in place.
@@ -109,6 +114,7 @@ func main() {
 		// IDE list against that path (which would hide every IDE).
 		scriptFilter(pickUID, "", `./jb ides --path "$1"`, "Open in a Different IDE", "Pick an installed IDE", false),
 	)
+	addUI(customCmdUID, 760, 80)
 	addUI(revealUID, 760, 220)
 	addUI(copyUID, 760, 360)
 	addUI(terminalUID, 760, 500)
@@ -118,7 +124,8 @@ func main() {
 	addUI(openPickUID, 760, 920)
 
 	// Shared/utility objects use the main (Toolbox) icon on the canvas.
-	objIcons = append(objIcons, iconRef{pickUID, ""}, iconRef{openPickUID, ""})
+	objIcons = append(objIcons,
+		iconRef{customCmdUID, ""}, iconRef{pickUID, ""}, iconRef{openPickUID, ""})
 
 	connections := map[string]any{}
 	connections[pickUID] = []any{conn(openPickUID, modNone)} // pick (ides) -> open-by-spec
@@ -154,6 +161,7 @@ func main() {
 			connSub(pickUID, modAlt, "Open in a different IDE…"),
 			connSub(copyUID, modCtrl, "Copy path"),
 			connSub(terminalUID, modShift, "Open in terminal"),
+			connSub(customCmdUID, modCtrl+modShift, "Open with your custom command (e.g. VS Code)"),
 			connSub(pinUID, modCmd+modShift, "Pin / unpin"),
 			connSub(forgetUID, modCmd+modAlt, "Forget (hide)"),
 		}
@@ -522,6 +530,9 @@ func userConfig() []any {
 	return []any{
 		worktreeCheckbox,
 		terminalPopup,
+		tf("JB_OPEN_CMD", "Custom open command",
+			"Command run by the ⌃⇧ action. {path} → the project path, {name} → its folder name (both quoted for you — leave them unquoted). Runs in your login shell (a script path works too). Examples: code {path}  ·  cmux new-workspace --name {name} --cwd {path}",
+			""),
 		sortPopup,
 		tf("JB_IGNORE_CONTENT", "Ignore content",
 			"Comma-separated entry-name globs treated as non-content; a project whose only contents are these (or hidden files) is hidden as a stub.",
@@ -550,7 +561,7 @@ Search and open your recent JetBrains projects across **all** installed IDEs and
 - per-IDE keywords (` + "`idea`, `pycharm`, `goland`, …" + `) — limit to one IDE.
 - append ` + "`~`" + ` to any keyword (` + "`jb~`, `goland~`" + `) to include git worktrees.
 
-Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌘⇧ pin/unpin · ⌘⌥ forget.
+Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌃⇧ custom open command (e.g. VS Code) · ⌘⇧ pin/unpin · ⌘⌥ forget.
 
 ---
 Not affiliated with or endorsed by JetBrains. IDE logos are trademarks of their

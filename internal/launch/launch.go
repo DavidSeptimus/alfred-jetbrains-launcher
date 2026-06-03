@@ -4,7 +4,10 @@ package launch
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/davidseptimus/alfred-jetbrains-launcher/internal/ide"
 )
@@ -54,4 +57,43 @@ func Terminal(app, projectPath string) error {
 		app = "Terminal"
 	}
 	return execCommand("open", "-a", app, projectPath).Run()
+}
+
+// OpenCommand runs the user's custom open command for a project (the ⌃⇧ action).
+// Some tools open a project through their own CLI (an editor like `code`, a
+// terminal multiplexer, an agent workspace) rather than as a macOS app, so the
+// command is a free-form template. Two tokens are substituted: {path} → the
+// project path, and {name} → its folder name (e.g. for naming a workspace). If
+// the template has no {path} token, the path is appended as the final argument.
+// The template can be any shell command line, including a path to a script.
+//
+// It runs through the user's login shell ($SHELL, `-lc`) for two reasons: the
+// template is shell syntax (pipes, flags, args), and a login shell loads the PATH
+// where such CLIs are installed (e.g. /opt/homebrew/bin or an app bundle's bin),
+// which Alfred's own minimal PATH usually lacks. Each token is single-quoted
+// before substitution, so it is splice-safe regardless of spaces — write {path}
+// and {name} unquoted in the template.
+func OpenCommand(template, projectPath string) error {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return fmt.Errorf("no custom open command configured")
+	}
+	script := strings.ReplaceAll(template, "{name}", shellQuote(filepath.Base(projectPath)))
+	quotedPath := shellQuote(projectPath)
+	if strings.Contains(template, "{path}") {
+		script = strings.ReplaceAll(script, "{path}", quotedPath)
+	} else {
+		script = script + " " + quotedPath
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	return execCommand(shell, "-lc", script).Run()
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single quote, so it
+// is safe to splice into a shell command line regardless of spaces or metachars.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
