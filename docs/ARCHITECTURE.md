@@ -5,7 +5,7 @@ GitHub directly from the ```mermaid blocks below.
 
 - [Project discovery → merge → display](#project-discovery--merge--display)
 - [IDE resolution](#ide-resolution)
-- [Update check (cached banner vs live `jbup`)](#update-check-cached-banner-vs-live-jbup)
+- [Update check (the passive banner)](#update-check-the-passive-banner)
 - [First-run quarantine self-heal](#first-run-quarantine-self-heal)
 
 ---
@@ -74,14 +74,13 @@ Code: `internal/ide` (`Resolve`, `NewestByFamily`, `PreferRunning`), `cmd/jb`
 
 ---
 
-## Update check (cached banner vs live `jbup`)
+## Update check (the passive banner)
 
-Two surfaces, deliberately different. The passive "update available" banner on
-`jb` is driven entirely by a **cached** check (no network on the hot path), with a
-background refresh at most once a day; the banner is **selectable** — pressing ↩
-runs the update in place. Typing **`jbup`** instead hits GitHub **live**, so it's
-always current. Self-update downloads via curl — not a browser — so the upgrade is
-never quarantined.
+The only update surface is the **passive banner** at the top of `jb` results,
+driven entirely by a **cached** check (no network on the hot path), refreshed in
+the background at most once a day. It's **selectable** — pressing ↩ updates in
+place — and the download runs via curl, not a browser, so the upgrade is never
+quarantined.
 
 ```mermaid
 flowchart LR
@@ -92,35 +91,36 @@ flowchart LR
     B -->|no| Z["no update UI"]
     B -->|yes| C[("update-cache.json")]:::cache
     C --> D{"last check over 24h ago?"}
-    D -->|fresh| G{"cached latestTag newer than current?"}
     D -->|stale| E["TouchChecked: stamp checkedAt = now"]:::cache
     E --> F["spawn detached: jb update --refresh-cache"]
     F --> G
     F -. background .-> J["RefreshCache: GitHub latest API"]:::net
     J --> K["write latestTag + checkedAt (even on failure)"]:::cache
     K -. updates .-> C
-    G -->|yes| H["prepend Update available banner (↩ selectable)"]
+    D -->|fresh| G{"cached latestTag newer than current?"}
     G -->|no| I["no banner"]
-    H -. "↩ routes through jb open sentinel" .-> Q
-
-    JB["jbup keyword"] --> L["jb update --check"]
-    L --> M["GitHub latest API — LIVE, bypasses cache"]:::net
-    M --> N{"newer?"}
-    N -->|yes| O["Install update row, then jb update --apply"]
-    N -->|no| P["Up to date"]
-    O --> Q["Download via curl (no quarantine)"]
-    Q --> R["open .alfredworkflow, Alfred imports in place"]
+    G -->|yes| H["prepend selectable Update available banner"]
+    H -->|↩| CO{"Conditional on jb_action"}
+    CO -->|matched| N["Downloading… notification"]:::net
+    CO -->|matched| O["jb update --apply"]
+    CO -->|else| OP["open the selected project (normal rows)"]
+    O --> DL["download via curl (no quarantine)"]
+    DL --> IM["open .alfredworkflow, Alfred imports in place"]
+    O -. on failure .-> ER["Couldn't update notification"]
 ```
 
 The `TouchChecked` stamp is the debounce: Alfred re-runs the Script Filter on
 every keystroke, so stamping `checkedAt = now` *before* spawning means only one
 background refresh fires per 24h window instead of one per keystroke. A failed
 refresh still records `checkedAt`, so a transient outage doesn't cause constant
-retries (it waits the full window). The banner has no downstream wiring of its own
-— Alfred routes one connection per Script Filter — so its ↩ reuses the `jb open`
-action via a sentinel `arg` that `cmdOpen` recognises and turns into an update.
+retries (it waits the full window). The banner shares the `jb` Script Filter's
+single ↩ connection with normal results, so it carries a `jb_action=update`
+variable and a **Conditional** routes the matched row to the "Downloading…"
+notification + the apply action (everything else opens the project). The apply
+action is wired onward to an error notification that shows its stdout, suppressed
+on success. The whole update graph is release-only — a source build omits it.
 Code: `internal/update`, `cmd/jb` `updateBanner` / `spawnBackgroundRefresh` /
-`cmdUpdate` / `cmdOpen`.
+`cmdUpdate`; the Conditional + notifications live in `cmd/genplist`.
 
 ---
 

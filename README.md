@@ -85,21 +85,19 @@ later `make build` runs are live immediately.
 
 ### Updating
 
-Type **`jbup`** to check GitHub for a newer release and install it in place
-(your config, pins, and forgotten projects are preserved). The in-app update is
-seamless — it downloads via the binary, so the new workflow isn't quarantined.
-(A *manual* browser download of the `.alfredworkflow` is quarantined, but the
+When a newer release exists, an **"Update available" banner** appears at the top
+of the `jb` results — **press ↩ on it to update in place** (your config, pins, and
+forgotten projects are preserved). A background check runs about once a day, so
+the banner shows up within a day of a release. The update downloads via the binary
+(not a browser), so the new workflow isn't quarantined — it's seamless. (A
+*manual* browser download of the `.alfredworkflow` is quarantined, but the
 workflow clears that itself on first run, as described above.)
 
-Released builds also surface an **"Update available" banner** at the top of `jb`
-when a newer version exists — **press ↩ on it to update in place** (no need to run
-`jbup` separately). The check runs in the background about once a day.
-
 Self-update only applies to **released builds**. A build from source (`make
-build`/`make install`) omits the in-app update UI entirely — no `jbup` keyword
-and no update banner — so update it with `git pull && make install` instead, and
-your working copy is never overwritten. This is controlled by a build-time
-`channel` flag (`dev` by default; `make dist` sets `release`).
+build`/`make install`) omits the update banner entirely — update it with
+`git pull && make install` instead, so your working copy is never overwritten.
+This is controlled by a build-time `channel` flag (`dev` by default; `make dist`
+sets `release`).
 
 ---
 
@@ -111,7 +109,6 @@ your working copy is never overwritten. This is controlled by a build-time
 | `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                 |
 | `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                   |
 | `<keyword>~`                                                                                                                                            | The same search, **including git worktrees** (`jb~`, `goland~`, …) |
-| `jbup`                                                                                                                                                  | Check for and install a newer release                              |
 
 Alfred fuzzy-matches your query against the project name and its path
 components, so `jb webfoo` finds `~/work/web/foo`.
@@ -267,8 +264,8 @@ Releases are cut entirely by GitHub Actions — there's no local release step.
 In the repo, go to **Actions → release → Run workflow** and choose the bump
 (`patch` / `minor` / `major`). The job derives the next version from the latest
 `v*` tag, builds the universal `.alfredworkflow`, commits the `VERSION` bump,
-tags it, and publishes the GitHub Release (which the in-app `jbup` updater then
-sees). With no tags yet, `minor` cuts `v0.1.0`.
+tags it, and publishes the GitHub Release (which the in-app update banner then
+surfaces). With no tags yet, `minor` cuts `v0.1.0`.
 
 ![The generated workflow object graph in Alfred's editor — a Script Filter per keyword wired to shared Run Script actions](docs/img/workflow.png)
 

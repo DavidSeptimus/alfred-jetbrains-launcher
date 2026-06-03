@@ -66,9 +66,8 @@ func main() {
 	uid := func(role string) string { return uuid5(ns, spec.Workflow.BundleID+":"+role) }
 
 	// The in-app updater is release-only: a source build updates via git, so its
-	// plist omits the whole update UI (the jbup keyword, the banner Conditional,
-	// the notifications) rather than surfacing an "update unavailable" row that
-	// would clutter the launcher.
+	// plist omits the whole update UI (the banner Conditional + its notifications)
+	// rather than offering an update path that doesn't apply to a dev build.
 	release := *channel == "release"
 
 	// Shared modifier actions + the "pick a different IDE" drill-down. The project
@@ -81,7 +80,6 @@ func main() {
 	forgetUID := uid("action:forget")
 	pickUID := uid("sf:pick")
 	openPickUID := uid("action:openpick")
-	updateUID := uid("sf:update")
 	updateApplyUID := uid("action:update")
 	// The unified-keyword update banner routes ↩ through a Conditional that sends
 	// the banner row (jb_action=update) to update-apply + a notification, and any
@@ -125,28 +123,25 @@ func main() {
 	connections := map[string]any{}
 	connections[pickUID] = []any{conn(openPickUID, modNone)} // pick (ides) -> open-by-spec
 
-	// Update UI — release only. A source build's plist has none of this, so the
-	// unified keyword's ↩ just opens (see the loop) and there is no jbup keyword.
+	// Update UI — release only, and surfaced solely through the in-`jb` banner
+	// (updateBanner in the binary emits the row; the Conditional in the loop wires
+	// it). A source build's plist has none of this, and there is no update keyword.
 	if release {
 		objects = append(objects,
-			// `jbup` — check for and install a newer release of THIS workflow.
-			scriptFilter(updateUID, "jbup", `./jb update --check`, "Update This Workflow",
-				"Check GitHub for a newer version of the JetBrains IDE Project Launcher workflow (not your IDEs)", false),
 			scriptAction(updateApplyUID, `./jb update --apply`),
 			conditional(updateCondUID, updateCondOutUID, "{var:jb_action}", "update", "Update", "Open"),
 			notification(notifyUID, "JetBrains IDE Project Launcher", "Downloading the update…", false),
 			notification(errorNotifyUID, "Couldn't update the launcher", "{query}", true),
 		)
-		addUI(updateUID, 420, 1060)
 		addUI(updateApplyUID, 760, 1060)
 		addUI(updateCondUID, 600, 1200)
 		addUI(notifyUID, 980, 1200)
 		addUI(errorNotifyUID, 980, 1340)
-		objIcons = append(objIcons, iconRef{updateUID, ""}, iconRef{updateApplyUID, ""})
+		objIcons = append(objIcons, iconRef{updateApplyUID, ""})
 
-		// jbup ↩ -> update-apply + "Downloading…"; update-apply -> error notification
-		// (shown only when apply prints an error, i.e. suppressed on success).
-		connections[updateUID] = []any{conn(updateApplyUID, modNone), conn(notifyUID, modNone)}
+		// update-apply -> error notification (shown only when apply prints an error,
+		// suppressed on success). The banner Conditional (in the loop) routes the
+		// matched row to update-apply + the "Downloading…" notification.
 		connections[updateApplyUID] = []any{conn(errorNotifyUID, modNone)}
 	}
 
