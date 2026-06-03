@@ -21,11 +21,11 @@ jobs:
   release:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0 # full history + tags, so the version can be derived
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: "1.23"
 
@@ -35,7 +35,7 @@ jobs:
       # forces that level instead. The action exposes the result as outputs.version.
       - name: Update CHANGELOG.md and compute version
         id: changelog
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
         with:
           config: cliff.toml
           args: ${{ inputs.bump == 'auto' && '--bump' || format('--bump {0}', inputs.bump) }}
@@ -62,7 +62,7 @@ jobs:
       # The same generator, but only this release's section — used verbatim as the
       # GitHub Release body (replacing GitHub's auto --generate-notes).
       - name: Build release notes
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
         with:
           config: cliff.toml
           args: --tag ${{ steps.ver.outputs.tag }} --unreleased --strip header
