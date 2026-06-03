@@ -5,11 +5,16 @@ CHANNEL    ?= dev
 BUNDLEID   := com.davidseptimus.jetbrains-launcher
 BUNDLE     := build/jb-bundle
 ALFRED_DIR := $(HOME)/Library/Application Support/Alfred/Alfred.alfredpreferences/workflows
+# Where the installed workflow keeps its durable data (pins, last search, and the
+# update-check cache) — Alfred sets alfred_workflow_data to this at runtime.
+ALFRED_DATA := $(HOME)/Library/Application Support/Alfred/Workflow Data/$(BUNDLEID)
+# The data dir the binary falls back to when run outside Alfred (e.g. a shell).
+DEFAULT_DATA := $(HOME)/Library/Application Support/jb-alfred
 # Recursive (=) so a target-specific CHANNEL (e.g. on dist) is picked up.
 LDFLAGS     = -s -w -X main.version=$(VERSION) -X main.channel=$(CHANNEL)
 GOBUILD     = CGO_ENABLED=0 GOOS=darwin go build -ldflags "$(LDFLAGS)"
 
-.PHONY: all build build-universal plist icons bundle install dist test fmt vet clean
+.PHONY: all build build-universal plist icons bundle install dist test fmt vet clean wipe-update-cache
 
 all: bundle
 
@@ -73,6 +78,13 @@ vet:
 
 fmt:
 	gofmt -w .
+
+## wipe-update-cache: delete the cached release check so the next `jb` re-checks
+## GitHub right away (handy for testing the "update available" banner). Only the
+## update cache is removed — pins, forgotten projects, and last search are kept.
+wipe-update-cache:
+	rm -f "$(ALFRED_DATA)/update-cache.json" "$(DEFAULT_DATA)/update-cache.json"
+	@echo "wiped update-cache.json — next 'jb' search will re-check GitHub"
 
 clean:
 	rm -rf build dist
