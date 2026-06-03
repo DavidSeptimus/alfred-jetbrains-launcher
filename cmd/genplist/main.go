@@ -260,7 +260,26 @@ func writeObjectIcons(bundle string, refs []iconRef) int {
 	return n
 }
 
+// dequarantinePrefix strips the com.apple.quarantine flag that a browser attaches
+// to a manually-downloaded release, before the (ad-hoc-signed) jb binary is
+// exec'd. macOS Gatekeeper blocks a never-approved quarantined binary on first
+// launch (it's killed before main() runs, so the binary cannot clear its own
+// flag) — which would make the workflow show nothing until the user ran xattr by
+// hand. This runs in Alfred's inline shell (a system binary, not gated) and
+// clears the flag first, so the launch succeeds. It is prepended to every Script
+// Filter because those are the only entry points reachable before any jb run
+// (modifier actions always follow a Script Filter, by which point jb is cleared).
+//
+// /usr/bin/xattr is spelled out so a pyenv/conda xattr on PATH (which lacks -r)
+// can't shadow the macOS built-in. A .dequarantined marker keeps the directory
+// sweep to one pass per install (cwd is the workflow dir, so "$PWD" is the
+// bundle); Alfred wipes it when it re-imports the bundle, so an upgrade that is
+// itself quarantined is cleaned again. All steps are best-effort.
+const dequarantinePrefix = `if [ ! -e .dequarantined ]; then /usr/bin/xattr -dr com.apple.quarantine "$PWD" >/dev/null 2>&1; touch .dequarantined; fi
+`
+
 func scriptFilter(uid, keyword, script, title, subtext string, filterResults bool) map[string]any {
+	script = dequarantinePrefix + script
 	cfg := map[string]any{
 		"alfredfiltersresults":           filterResults,
 		"alfredfiltersresultsmatchmode":  2,

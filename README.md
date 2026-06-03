@@ -50,12 +50,27 @@ show up.
 
 ### From a release
 
-Download `jb-<version>.alfredworkflow` and double-click it to import. If macOS
-quarantines the unsigned binary, run once:
+Download `jb-<version>.alfredworkflow` and double-click it to import.
+
+macOS tags any browser download as quarantined, and Gatekeeper blocks the
+workflow's (ad-hoc-signed) binary on first launch. The workflow clears its own
+quarantine flag the first time you trigger it — from inside Alfred, no Terminal
+step: Alfred runs the Script Filter through the system shell (which isn't gated),
+so it strips the flag before launching the binary.
+
+If the binary somehow stays blocked (results never appear), clear it by hand
+once. Alfred imports each workflow into a randomly-named `user.workflow.<UUID>`
+folder, so locate ours by its bundle id (stored in every workflow's `info.plist`)
+and clear only that folder — never the whole workflows directory:
 
 ```sh
-xattr -dr com.apple.quarantine "$HOME/Library/Application Support/Alfred/Alfred.alfredpreferences/workflows/com.davidseptimus.jetbrains-launcher"
+wf=$(grep -l com.davidseptimus.jetbrains-launcher \
+  "$HOME/Library/Application Support/Alfred/Alfred.alfredpreferences/workflows"/*/info.plist | head -1)
+[ -n "$wf" ] && /usr/bin/xattr -dr com.apple.quarantine "$(dirname "$wf")"
 ```
+
+(`/usr/bin/xattr` is spelled out so a pyenv/conda `xattr` on your `PATH` — which
+lacks `-r` — can't shadow the macOS built-in.)
 
 ### From source
 
@@ -73,8 +88,8 @@ later `make build` runs are live immediately.
 Type **`jbup`** to check GitHub for a newer release and install it in place
 (your config, pins, and forgotten projects are preserved). The in-app update is
 seamless — it downloads via the binary, so the new workflow isn't quarantined.
-(Only a *manual* browser download of the `.alfredworkflow` is quarantined and
-would need the one-time `xattr` command above.)
+(A *manual* browser download of the `.alfredworkflow` is quarantined, but the
+workflow clears that itself on first run, as described above.)
 
 Released builds also surface an **"Update available" banner** at the top of `jb`
 when a newer version exists — the check runs in the background about once a day.
