@@ -82,6 +82,7 @@ func main() {
 	updateCondUID := uid("cond:update")
 	updateCondOutUID := uid("cond:update:matched")
 	notifyUID := uid("output:notify")
+	errorNotifyUID := uid("output:notify-error")
 
 	var objects []any
 	var objIcons []iconRef // per-object canvas icons (uid -> family; "" = main workflow icon)
@@ -107,7 +108,8 @@ func main() {
 			"Check GitHub for a newer version of the JetBrains IDE Project Launcher workflow (not your IDEs)", false),
 		scriptAction(updateApplyUID, `./jb update --apply`),
 		conditional(updateCondUID, updateCondOutUID, "{var:jb_action}", "update", "Update", "Open"),
-		notification(notifyUID, "JetBrains IDE Project Launcher", "Downloading the update…"),
+		notification(notifyUID, "JetBrains IDE Project Launcher", "Downloading the update…", false),
+		notification(errorNotifyUID, "Couldn't update the launcher", "{query}", true),
 	)
 	addUI(revealUID, 760, 220)
 	addUI(copyUID, 760, 360)
@@ -120,6 +122,7 @@ func main() {
 	addUI(updateApplyUID, 760, 1060)
 	addUI(updateCondUID, 600, 1200)
 	addUI(notifyUID, 980, 1200)
+	addUI(errorNotifyUID, 980, 1340)
 
 	// Shared/utility objects use the main (Toolbox) icon on the canvas.
 	objIcons = append(objIcons,
@@ -132,6 +135,10 @@ func main() {
 	// pick (ides) -> open-by-spec; jbup -> update-apply + "Downloading…" notification.
 	connections[pickUID] = []any{conn(openPickUID, modNone)}
 	connections[updateUID] = []any{conn(updateApplyUID, modNone), conn(notifyUID, modNone)}
+	// After applying (from either the banner or jbup), surface any failure via a
+	// notification that shows update-apply's stdout — suppressed when empty, i.e.
+	// on success, where Alfred's import sheet is the only confirmation.
+	connections[updateApplyUID] = []any{conn(errorNotifyUID, modNone)}
 
 	// Each keyword's results route to its open action (↩) plus the shared
 	// reveal/pick/copy/terminal/pin/forget actions on modifier keys.
@@ -397,13 +404,15 @@ func conditional(uid, outUID, input, matchStr, matchLabel, elseLabel string) map
 	}
 }
 
-// notification builds a Post Notification output. onlyshowifquerypopulated is
-// false so a static message still shows when no query flows into it.
-func notification(uid, title, text string) map[string]any {
+// notification builds a Post Notification output. Pass onlyIfQuery=true for a
+// notification that should only fire when non-empty input flows in (used for the
+// error message, which is suppressed on success when the action prints nothing);
+// false for a static message that always shows (the "Downloading…" start).
+func notification(uid, title, text string, onlyIfQuery bool) map[string]any {
 	return map[string]any{
 		"config": map[string]any{
 			"lastpathcomponent":        false,
-			"onlyshowifquerypopulated": false,
+			"onlyshowifquerypopulated": onlyIfQuery,
 			"removeextension":          false,
 			"text":                     text,
 			"title":                    title,

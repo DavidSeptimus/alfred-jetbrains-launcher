@@ -501,29 +501,37 @@ func updateCheck() {
 }
 
 func updateApply() {
+	// Notifications are posted by the workflow graph, not from here: a Post
+	// Notification wired alongside this action shows "Downloading…" at the start,
+	// and a second one downstream surfaces any error by showing this action's
+	// stdout (suppressed when empty). So on failure we print a short message to
+	// stdout and exit 0 — exit 0 lets Alfred run that downstream notification
+	// rather than treating it as a script error — and on success we print nothing,
+	// leaving Alfred's import sheet as the only confirmation. (Alfred's own
+	// notification is reliable; an osascript one spawned via Alfred is not.)
+	updateFail := func(msg string) {
+		fmt.Println(msg)
+		os.Exit(0)
+	}
 	rel, err := update.Latest()
 	if err != nil {
-		fail("update: " + err.Error())
+		updateFail("Couldn't reach GitHub — " + err.Error())
 	}
 	url, ok := rel.WorkflowAsset()
 	if !ok {
 		// No packaged asset — open the release page so the user can grab it.
 		_ = exec.Command("open", rel.HTMLURL).Run()
-		fail("update: latest release has no .alfredworkflow asset (opened release page)")
+		updateFail("That release has no downloadable asset — opened its page instead")
 	}
 	path, err := update.Download(url)
 	if err != nil {
-		fail("update: " + err.Error())
+		updateFail("Download failed — " + err.Error())
 	}
 	// Opening the .alfredworkflow hands it to Alfred, which imports it in place
-	// (same bundle id), preserving config + pins/forgets. The "Downloading…"
-	// notification is posted by the workflow graph (a Post Notification object
-	// wired alongside this action), not from here: Alfred's own notification is
-	// reliable, whereas an osascript one spawned via Alfred is silently dropped.
+	// (same bundle id), preserving config + pins/forgets.
 	if err := exec.Command("open", path).Run(); err != nil {
-		fail("update: " + err.Error())
+		updateFail("Couldn't open the downloaded update — " + err.Error())
 	}
-	fmt.Printf("downloaded %s, importing…\n", rel.TagName)
 }
 
 // infoIcon is an update-related row carrying the workflow's own (Toolbox) icon,
