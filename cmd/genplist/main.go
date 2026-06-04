@@ -221,6 +221,17 @@ func main() {
 		}
 		connections[sfUID] = keyMods(enterUID)
 
+		// `<keyword>+` — same search, but also including un-opened projects found
+		// by scanning the project roots: JB_PROJECT_ROOTS when set, otherwise the
+		// auto-detected conventional ~/<IDE>Projects / ~/<IDE>Workspaces folders.
+		plusUID := uid("sf:" + k.Keyword + "+")
+		objects = append(objects, scriptFilter(plusUID, kwRef+"+",
+			base+` --roots --keyword "`+kwEnv+`+" --query "$1"`, k.Title+" (+ unopened)",
+			k.Subtext+", including un-opened projects from your roots", true))
+		objIcons = append(objIcons, iconRef{plusUID, k.Product})
+		addUI(plusUID, 170, y)
+		connections[plusUID] = keyMods(enterUID)
+
 		// `<keyword>~` — same search, but including git worktrees.
 		wtUID := uid("sf:" + k.Keyword + "~")
 		objects = append(objects, scriptFilter(wtUID, kwRef+"~",
@@ -454,7 +465,7 @@ func keywordField(variable, def, title string) map[string]any {
 		"type":        "textfield",
 		"variable":    variable,
 		"label":       title + " keyword",
-		"description": "Alfred keyword that triggers " + title + " (its `~` worktree variant follows it). Clear to disable.",
+		"description": "Alfred keyword that triggers " + title + " (its `~` worktree and `+` project-roots variants follow it). Clear to disable.",
 		"config": map[string]any{
 			"default":     def,
 			"placeholder": "",
@@ -465,6 +476,23 @@ func keywordField(variable, def, title string) map[string]any {
 }
 
 func userConfig() []any {
+	// tfp is a text field with a greyed placeholder — used where an empty value is
+	// meaningful (it triggers a behaviour) so the field shouldn't read as "unset"
+	// (e.g. Project roots shows "Auto-detect" when left blank).
+	tfp := func(variable, label, desc, def, placeholder string) map[string]any {
+		return map[string]any{
+			"type":        "textfield",
+			"variable":    variable,
+			"label":       label,
+			"description": desc,
+			"config": map[string]any{
+				"default":     def,
+				"placeholder": placeholder,
+				"required":    false,
+				"trim":        true,
+			},
+		}
+	}
 	tf := func(variable, label, desc, def string) map[string]any {
 		return map[string]any{
 			"type":        "textfield",
@@ -546,6 +574,10 @@ func userConfig() []any {
 		tf("JB_APP_ROOTS", "Application folders",
 			"Colon-separated folders scanned for JetBrains .app bundles. Clear to restore the defaults.",
 			"/Applications:~/Applications"),
+		tfp("JB_PROJECT_ROOTS", "Project roots",
+			"Colon-separated dirs whose immediate subfolders are offered as projects even if you've never opened them — reachable via the `+` keyword variant (e.g. `jb+`, `idea+`). Leave empty to auto-detect the conventional ~/<IDE>Projects and ~/<IDE>Workspaces folders that exist. Set to override. For example: ~/IdeaProjects:~/GolandProjects",
+			"",
+			"Auto-detect"),
 		tf("JB_TOOLBOX_DIR", "Toolbox script dirs",
 			"Colon-separated dirs holding JetBrains Toolbox launcher scripts. Clear to restore the default.",
 			"~/Library/Application Support/JetBrains/Toolbox/scripts"),
@@ -560,6 +592,7 @@ Search and open your recent JetBrains projects across **all** installed IDEs and
 - ` + "`jb`" + ` — search every recent project; each opens in the IDE it was last used in.
 - per-IDE keywords (` + "`idea`, `pycharm`, `goland`, …" + `) — limit to one IDE.
 - append ` + "`~`" + ` to any keyword (` + "`jb~`, `goland~`" + `) to include git worktrees.
+- append ` + "`+`" + ` to any keyword (` + "`jb+`, `idea+`" + `) to also include un-opened projects from your configured project roots.
 
 Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌃⇧ custom open command (e.g. VS Code) · ⌘⇧ pin/unpin · ⌘⌥ forget.
 

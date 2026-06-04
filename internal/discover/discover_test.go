@@ -62,6 +62,32 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestFindProjectDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"alpha", "beta", ".hidden"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A plain file at the root must be skipped (only dirs are projects).
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	roots := []string{
+		root,
+		filepath.Join(root, "does-not-exist"), // missing root -> skipped silently
+	}
+
+	got := map[string]bool{}
+	for _, d := range FindProjectDirs(roots) {
+		got[filepath.Base(d)] = true
+	}
+	if len(got) != 2 || !got["alpha"] || !got["beta"] {
+		t.Fatalf("want exactly alpha+beta (dotdir, file, missing root excluded), got %v", got)
+	}
+}
+
 func TestSplitProductVersion(t *testing.T) {
 	cases := map[string][2]string{
 		"IntelliJIdea2026.2":    {"IntelliJIdea", "2026.2"},

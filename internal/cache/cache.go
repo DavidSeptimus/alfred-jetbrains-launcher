@@ -26,12 +26,20 @@ type payload struct {
 }
 
 // Fingerprint builds the cache key from config-root mtimes, recent-file mtimes,
-// and Fleet/Air ship-store mtimes.
-func Fingerprint(cfg config.Config, files []discover.RecentFile, ships []discover.ShipFile) string {
+// Fleet/Air ship-store mtimes, and the effective project-root mtimes. projectRoots
+// are the resolved roots scanned for the `+` variant (configured or auto-detected).
+func Fingerprint(cfg config.Config, files []discover.RecentFile, ships []discover.ShipFile, projectRoots []string) string {
 	var parts []string
 	for _, r := range cfg.ConfigRoots {
 		if info, err := os.Stat(r.Dir); err == nil {
 			parts = append(parts, fmt.Sprintf("root:%s=%d", r.Dir, info.ModTime().UnixNano()))
+		}
+	}
+	// Project roots feed the `+` variant's un-opened scan; a root's mtime changes
+	// when a subdir is added or removed, so fold it in to invalidate the cache.
+	for _, dir := range projectRoots {
+		if info, err := os.Stat(dir); err == nil {
+			parts = append(parts, fmt.Sprintf("projroot:%s=%d", dir, info.ModTime().UnixNano()))
 		}
 	}
 	for _, f := range files {

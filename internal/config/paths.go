@@ -20,6 +20,7 @@ type Config struct {
 	ConfigRoots      []Root
 	AppRoots         []string
 	ToolboxDirs      []string
+	ProjectRoots     []string // dirs whose immediate subdirs are scanned for un-opened projects (the `+` variant)
 	CacheDir         string
 	DataDir          string   // durable per-workflow state (pins, hidden list)
 	ExcludeWorktrees bool     // hide linked git worktrees from results (default true)
@@ -34,19 +35,20 @@ type Config struct {
 // the built-in defaults. Each is an os.PathListSeparator-separated list where
 // it makes sense.
 const (
-	envConfigRoots = "JB_CONFIG_ROOTS" // colon-separated dirs (assumed JetBrains vendor unless they contain "Google")
-	envAppRoots    = "JB_APP_ROOTS"    // colon-separated dirs holding *.app bundles
-	envToolbox     = "JB_TOOLBOX_DIR"  // dir holding Toolbox launcher scripts
-	envCacheDir    = "JB_CACHE_DIR"    // overrides the cache directory
-	envAlfredCache = "alfred_workflow_cache"
-	envExcludeWT   = "JB_EXCLUDE_WORKTREES" // "0"/"false" to include git worktrees
-	envTerminal    = "JB_TERMINAL"          // app name for the "open in terminal" action
-	envOpenCmd     = "JB_OPEN_CMD"          // custom shell command for the ⌃⇧ open action
-	envAlfredData  = "alfred_workflow_data"
-	envDataDir     = "JB_DATA_DIR"       // overrides the durable data directory
-	envIgnoreCont  = "JB_IGNORE_CONTENT" // comma-separated entry-name globs
-	envIgnoreProj  = "JB_IGNORE_PROJECTS"
-	envSort        = "JB_SORT" // result order; defaults to recency (newest first)
+	envConfigRoots  = "JB_CONFIG_ROOTS"  // colon-separated dirs (assumed JetBrains vendor unless they contain "Google")
+	envAppRoots     = "JB_APP_ROOTS"     // colon-separated dirs holding *.app bundles
+	envProjectRoots = "JB_PROJECT_ROOTS" // colon-separated dirs scanned (one level) for un-opened projects
+	envToolbox      = "JB_TOOLBOX_DIR"   // dir holding Toolbox launcher scripts
+	envCacheDir     = "JB_CACHE_DIR"     // overrides the cache directory
+	envAlfredCache  = "alfred_workflow_cache"
+	envExcludeWT    = "JB_EXCLUDE_WORKTREES" // "0"/"false" to include git worktrees
+	envTerminal     = "JB_TERMINAL"          // app name for the "open in terminal" action
+	envOpenCmd      = "JB_OPEN_CMD"          // custom shell command for the ⌃⇧ open action
+	envAlfredData   = "alfred_workflow_data"
+	envDataDir      = "JB_DATA_DIR"       // overrides the durable data directory
+	envIgnoreCont   = "JB_IGNORE_CONTENT" // comma-separated entry-name globs
+	envIgnoreProj   = "JB_IGNORE_PROJECTS"
+	envSort         = "JB_SORT" // result order; defaults to recency (newest first)
 )
 
 // normalizeSort validates a JB_SORT value, defaulting to "recency" (the most
@@ -113,6 +115,10 @@ func Load() Config {
 	} else {
 		cfg.AppRoots = []string{"/Applications", filepath.Join(home, "Applications")}
 	}
+
+	// Project roots are opt-in: empty by default, so the `+` variant is inert
+	// until the user configures at least one root.
+	cfg.ProjectRoots = splitPaths(home, os.Getenv(envProjectRoots))
 
 	if dirs := splitPaths(home, os.Getenv(envToolbox)); len(dirs) > 0 {
 		cfg.ToolboxDirs = dirs

@@ -2,7 +2,7 @@
 //
 // Subcommands:
 //
-//	jb search [--product <family>] [--worktrees] [--query <q>]  Script Filter JSON of recent projects
+//	jb search [--product <family>] [--worktrees] [--roots] [--query <q>]  Script Filter JSON of recent projects
 //	jb ides   --path <p>                            Script Filter JSON of IDEs to open <p> with
 //	jb open   --path <p> [--product <family>] | --spec <code\x1fdatadir\x1fpath>
 //	jb action --do reveal|copy|terminal --path <p>
@@ -80,13 +80,96 @@ func main() {
 func loadProjects(cfg config.Config) []recent.Project {
 	files := discover.Find(cfg)
 	ships := discover.FindShips(cfg)
-	fp := cache.Fingerprint(cfg, files, ships)
+	roots := effectiveProjectRoots(cfg)
+	fp := cache.Fingerprint(cfg, files, ships, rootPaths(roots))
 	if projects, ok := cache.Load(cfg, fp); ok {
 		return projects
 	}
 	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
+	// Fold each project root's immediate subdirs in as un-opened projects, tagged
+	// with the IDE the root implies. They are cached alongside recents (one shared
+	// cache for both `jb` and `jb+`); emitSearch hides them unless `+` is used.
+	if scan := scanUnopened(roots); len(scan) > 0 {
+		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
+	}
 	cache.Save(cfg, fp, projects)
 	return projects
+}
+
+// projectRoot is a scanned root plus the production code its folder implies
+// ("" for user-configured roots, which imply no particular IDE).
+type projectRoot struct {
+	Path string
+	Code string
+}
+
+// effectiveProjectRoots is the list of roots scanned for the `+` variant: the
+// user's configured JB_PROJECT_ROOTS when set (no implied IDE), otherwise the
+// conventional ~/<IDE>Projects / ~/<IDE>Workspaces folders that exist under home,
+// each tagged with the IDE it implies.
+func effectiveProjectRoots(cfg config.Config) []projectRoot {
+	if len(cfg.ProjectRoots) > 0 {
+		roots := make([]projectRoot, len(cfg.ProjectRoots))
+		for i, p := range cfg.ProjectRoots {
+			// Absolute so scanned paths dedup against recents' canonical (absolute)
+			// keys and never reach Alfred's launch actions as a relative arg.
+			if abs, err := filepath.Abs(p); err == nil {
+				p = abs
+			}
+			roots[i] = projectRoot{Path: p}
+		}
+		return roots
+	}
+	return defaultProjectRoots(cfg.Home)
+}
+
+// defaultProjectRoots returns the conventional JetBrains project/workspace
+// folders that actually exist under home, matched case-insensitively so on-disk
+// casing (e.g. "GoLandProjects") is honoured, each tagged with the IDE it
+// implies. Only existing directories are returned, so a relocated or unused
+// convention simply contributes nothing.
+func defaultProjectRoots(home string) []projectRoot {
+	if home == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		return nil
+	}
+	actual := make(map[string]string, len(entries)) // lower-case name -> real name
+	for _, e := range entries {
+		if e.IsDir() {
+			actual[strings.ToLower(e.Name())] = e.Name()
+		}
+	}
+	var roots []projectRoot
+	for _, d := range ide.DefaultProjectDirs() {
+		if real, ok := actual[strings.ToLower(d.Name)]; ok {
+			roots = append(roots, projectRoot{Path: filepath.Join(home, real), Code: d.Code})
+		}
+	}
+	return roots
+}
+
+// rootPaths extracts just the paths, for the cache fingerprint.
+func rootPaths(roots []projectRoot) []string {
+	paths := make([]string, len(roots))
+	for i, r := range roots {
+		paths[i] = r.Path
+	}
+	return paths
+}
+
+// scanUnopened scans each root one level deep, tagging every subdirectory with
+// the root's implied production code.
+func scanUnopened(roots []projectRoot) []recent.ScanDir {
+	var out []recent.ScanDir
+	for _, r := range roots {
+		for _, dir := range discover.FindProjectDirs([]string{r.Path}) {
+			out = append(out, recent.ScanDir{Path: dir, Code: r.Code})
+		}
+	}
+	return out
 }
 
 // parseAll parses every recentProjects.xml plus every Fleet/Air ship store into
@@ -106,15 +189,16 @@ func cmdSearch(args []string) {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	product := fs.String("product", "", "limit to one IDE family (e.g. idea, goland)")
 	worktrees := fs.Bool("worktrees", false, "include git worktrees regardless of config")
+	roots := fs.Bool("roots", false, "include un-opened projects from the configured project roots (the `+` variant)")
 	query := fs.String("query", "", "current query (recorded so pin/forget can restore it)")
 	keyword := fs.String("keyword", "", "the live Alfred keyword (so pin/forget re-opens the right, possibly-renamed, keyword)")
 	_ = fs.Parse(args)
-	emitSearch(config.Load(), *product, *query, *worktrees, *keyword)
+	emitSearch(config.Load(), *product, *query, *worktrees, *roots, *keyword)
 }
 
 // emitSearch renders the Script Filter results for a product family. It records
 // the current keyword + query so that pin/forget can re-open Alfred in place.
-func emitSearch(cfg config.Config, product, query string, worktreesFlag bool, keyword string) {
+func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoots bool, keyword string) {
 	// Prefer the live keyword Alfred passed (honours a user rename); fall back to
 	// the built-in keyword when run from the CLI without --keyword, or when Alfred
 	// handed over an unresolved/blank value. The latter guards the env-var path:
@@ -122,8 +206,8 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag bool, ke
 	// arrives empty (or as a lone "~" for the worktree variant), and a stale plist
 	// could still pass a literal "{var:…}". Any of those would otherwise be saved
 	// and re-searched by pin/forget, surfacing as stray text in the Alfred box.
-	if keyword == "" || keyword == "~" || strings.Contains(keyword, "{var:") {
-		keyword = keywordFor(product, worktreesFlag)
+	if keyword == "" || keyword == "~" || keyword == "+" || strings.Contains(keyword, "{var:") {
+		keyword = keywordFor(product, worktreesFlag, scanRoots)
 	}
 	saveLastSearch(cfg.DataDir, keyword, query)
 	st := state.Load(cfg.DataDir)
@@ -156,8 +240,21 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag bool, ke
 		if p.IsWorktree && !showWorktrees {
 			continue // hide linked git worktrees by default
 		}
-		if product != "" && !familyMatches(p, product) {
+		if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
+			// Un-opened root-scan entries only show under the `+` variant — unless
+			// pinned: a pin means "keep this handy", so (like a durable pin that has
+			// aged out of recents) it surfaces in the normal list too, ★-pinned.
 			continue
+		}
+		if product != "" && !familyMatches(p, product) {
+			// Un-opened projects with no implied IDE — from a custom JB_PROJECT_ROOTS,
+			// which disables auto-detection — are eligible under any per-IDE keyword;
+			// the keyword then drives which IDE opens them (ide.Resolve hard-limits to
+			// it). Coded un-opened entries (auto-detected roots) stay scoped to their
+			// implied IDE, so they don't fan out across every per-IDE keyword.
+			if !(p.Unopened && p.ProductionCode == "") {
+				continue
+			}
 		}
 		target, found := ide.Resolve(installed, p.ProductionCode, p.SourceDataDir, product)
 
@@ -397,8 +494,12 @@ func cmdRefresh() {
 	cfg := config.Load()
 	files := discover.Find(cfg)
 	ships := discover.FindShips(cfg)
+	roots := effectiveProjectRoots(cfg)
 	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
-	cache.Save(cfg, cache.Fingerprint(cfg, files, ships), projects)
+	if scan := scanUnopened(roots); len(scan) > 0 {
+		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
+	}
+	cache.Save(cfg, cache.Fingerprint(cfg, files, ships, rootPaths(roots)), projects)
 	fmt.Printf("cached %d projects from %d files\n", len(projects), len(files)+len(ships))
 }
 
@@ -570,7 +671,11 @@ func cmdDoctor() {
 	cfg := config.Load()
 	files := discover.Find(cfg)
 	ships := discover.FindShips(cfg)
+	roots := effectiveProjectRoots(cfg)
 	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
+	if scan := scanUnopened(roots); len(scan) > 0 {
+		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
+	}
 	installed := ide.Detect(cfg)
 	st := state.Load(cfg.DataDir)
 
@@ -588,6 +693,13 @@ func cmdDoctor() {
 		line("  [%-9s] %s (%s)", r.Vendor, r.Dir, mark(r.Dir))
 	}
 	line("App roots:         %s", strings.Join(cfg.AppRoots, "  "))
+	if len(roots) > 0 {
+		src := "auto-detected"
+		if len(cfg.ProjectRoots) > 0 {
+			src = "JB_PROJECT_ROOTS"
+		}
+		line("Project roots:     %s  (%s)", strings.Join(rootPaths(roots), "  "), src)
+	}
 	for i, dir := range cfg.ToolboxDirs {
 		label := "Toolbox scripts:"
 		if i > 0 {
@@ -618,7 +730,7 @@ func cmdDoctor() {
 	}
 	line("")
 
-	var shown, missing, stub, worktrees, hidden, ignored int
+	var shown, missing, stub, worktrees, hidden, ignored, unopened int
 	for _, p := range projects {
 		switch {
 		case st.IsHidden(p.Path):
@@ -631,6 +743,8 @@ func cmdDoctor() {
 			ignored++
 		case p.IsWorktree:
 			worktrees++
+		case p.Unopened:
+			unopened++ // shown only under the `+` variant
 		default:
 			shown++
 		}
@@ -645,6 +759,7 @@ func cmdDoctor() {
 	line("  hidden — stub (no real content): %d", stub)
 	line("  hidden — ignore pattern: %d", ignored)
 	line("  hidden — worktree:     %d (use <keyword>~ to show)", worktrees)
+	line("  un-opened (root scan): %d (use <keyword>+ to show)", unopened)
 	line("  hidden — forgotten:    %d", hidden)
 	line("  pinned:                %d", len(st.Pinned))
 }
@@ -825,14 +940,19 @@ func matchString(p recent.Project, family, ideLabel string) string {
 	return strings.Join(parts, " ")
 }
 
-// keywordFor reconstructs the Alfred keyword from a product family + worktrees flag.
-func keywordFor(product string, worktrees bool) string {
+// keywordFor reconstructs the Alfred keyword from a product family plus the
+// worktrees (`~`) / project-roots (`+`) variant flags. A Script Filter is exactly
+// one variant, so at most one suffix applies.
+func keywordFor(product string, worktrees, roots bool) string {
 	kw := "jb"
 	if product != "" {
 		kw = product
 	}
-	if worktrees {
+	switch {
+	case worktrees:
 		kw += "~"
+	case roots:
+		kw += "+"
 	}
 	return kw
 }

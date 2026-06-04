@@ -32,6 +32,9 @@ reopen.
   if a different version of that IDE is already running, it reuses it.
 - **Unified + per-IDE keywords** — `jb` for everything, or `idea` / `goland` /
   `pycharm` / … to scope to one IDE.
+- **Un-opened projects too** — the `+` variant (`jb+`, `idea+`) surfaces
+  freshly-cloned projects you've never opened, auto-detecting your
+  `~/<IDE>Projects` folders (override via config) and kept out of the default list.
 - **Quick actions** — reveal in Finder, copy path, open in a terminal, pick a
   different IDE, or run your own open command (VS Code, Cursor, …), all from
   modifier keys.
@@ -118,9 +121,41 @@ sets `release`).
 | `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                 |
 | `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                   |
 | `<keyword>~`                                                                                                                                            | The same search, **including git worktrees** (`jb~`, `goland~`, …) |
+| `<keyword>+`                                                                                                                                            | The same search, **plus un-opened projects** found in your configured [project roots](#un-opened-projects-the--variant) (`jb+`, `idea+`, …) |
 
 Alfred fuzzy-matches your query against the project name and its path
 components, so `jb webfoo` finds `~/work/web/foo`.
+
+#### Un-opened projects (the `+` variant)
+
+Everything above comes from your IDEs' recents — a project is only listed once
+an IDE has *opened* it. So a freshly `git clone`d repo you've never opened is
+invisible. The `+` variant adds every immediate subfolder of your **project
+roots**, even ones never opened.
+
+By default it **auto-detects** the conventional JetBrains folders under your home
+— `~/<IDE>Projects` for the classic IDEs and Android Studio (`~/IdeaProjects`,
+`~/GolandProjects`, `~/AndroidStudioProjects`, …) and `~/<IDE>Workspaces` for
+Fleet and Air — matched case-insensitively, and only those that actually exist.
+Set **Project roots** (`JB_PROJECT_ROOTS`) to a `:`-separated list to point it
+somewhere else instead.
+
+Because an auto-detected folder names its IDE, an un-opened project **opens in
+the IDE its root implies** — a folder in `~/GolandProjects` opens in GoLand, even
+under unified `jb+` — falling back through the [resolution
+chain](#which-ide-opens-a-project) when that IDE isn't installed. Folders from a
+custom `JB_PROJECT_ROOTS` imply no IDE: under `jb+` they use the fallback chain,
+and you can steer them with a **per-IDE `+` keyword** (`goland+` opens the
+highlighted folder in GoLand).
+
+These results stay **out of the plain `jb` list**, appearing only when you ask
+with `+` — with one exception: **pin** an un-opened project (⌘⇧) and it's
+promoted into the normal list too, ★-pinned, just like a durable pin that has
+aged out of recents. **Forget** one (⌘⌥) and it's hidden from `jb+`; that hide is
+durable and path-keyed, so if you later actually open the project it **stays
+hidden** from your recents until you restore it with `jb forget --clear`. Once an
+un-opened project is opened in an IDE it simply becomes a normal recent, carrying
+whatever pin/forget state you'd attached to it.
 
 ### Modifier keys (on a highlighted result)
 
@@ -176,6 +211,7 @@ Open **Configure Workflow…** in Alfred:
 | Ignore projects       | `JB_IGNORE_PROJECTS`   | _(none)_                         | Comma-separated globs matched against a project's name and full path; matches are hidden (e.g. `*-scratch`, `~/Downloads/*`)                   |
 | Config roots          | `JB_CONFIG_ROOTS`      | standard JetBrains & Google dirs | `:`-separated dirs holding per-version IDE config dirs                                                                                         |
 | Application folders   | `JB_APP_ROOTS`         | `/Applications:~/Applications`   | `:`-separated folders scanned for JetBrains `.app` bundles                                                                                     |
+| Project roots         | `JB_PROJECT_ROOTS`     | auto-detected `~/<IDE>Projects`  | `:`-separated dirs whose immediate subfolders are offered as un-opened projects via the `<keyword>+` variant. Empty = auto-detect the conventional folders; set to override |
 | Toolbox script dirs   | `JB_TOOLBOX_DIR`       | standard Toolbox scripts dir     | `:`-separated dirs of Toolbox launcher scripts                                                                                                 |
 
 The path fields are **pre-filled with their defaults**, so you can see and edit
@@ -209,7 +245,7 @@ panel, so you can rename any that you like. This matters when a keyword is also 
 word Alfred's default search matches: typing `studio`, for example, mixes your
 projects with file/app hits for *Visual **Studio** Code* and other "studio"
 files — rename it to something distinctive like `astudio` and it triggers
-cleanly (its `~` worktree variant follows). Clear a field to disable that
+cleanly (its `~` worktree and `+` project-roots variants follow). Clear a field to disable that
 keyword. These overrides live in the workflow's configuration, so they **persist
 across updates** (editing the keyword node in the editor directly would be reset
 on the next update).
