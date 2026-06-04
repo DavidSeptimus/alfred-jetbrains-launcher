@@ -19,6 +19,7 @@ type Project struct {
 	Exists         bool      // the directory still exists on disk
 	IsWorktree     bool      // the directory is a linked git worktree
 	Stub           bool      // the directory has no real content (only hidden / ignored entries)
+	Unopened       bool      // discovered by scanning a project root, never seen in any recents list
 	AllCodes       []string  // every distinct production code that opened this path
 }
 
@@ -74,18 +75,70 @@ func Merge(entries []RawEntry, ignoreContent []string) []Project {
 		out = append(out, *p)
 	}
 
-	// Most-recent first; existing projects before missing ones; stable by path.
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Exists != out[j].Exists {
-			return out[i].Exists
-		}
-		if !out[i].Timestamp.Equal(out[j].Timestamp) {
-			return out[i].Timestamp.After(out[j].Timestamp)
-		}
-		return out[i].Path < out[j].Path
-	})
-
+	sortByRecency(out)
 	return out
+}
+
+// sortByRecency orders projects most-recent first, with existing projects before
+// missing ones and a stable path tiebreak. Shared by Merge and AppendUnopened so
+// scanned un-opened entries interleave with recents by the same rule.
+func sortByRecency(projects []Project) {
+	sort.SliceStable(projects, func(i, j int) bool {
+		if projects[i].Exists != projects[j].Exists {
+			return projects[i].Exists
+		}
+		if !projects[i].Timestamp.Equal(projects[j].Timestamp) {
+			return projects[i].Timestamp.After(projects[j].Timestamp)
+		}
+		return projects[i].Path < projects[j].Path
+	})
+}
+
+// ScanDir is a candidate un-opened project directory plus the production code
+// implied by the root it was found under ("" when the root implies no IDE, e.g.
+// a user-configured root). The code lets a never-opened project still resolve to
+// the right IDE (a dir under GolandProjects → GoLand) while Resolve's fallback
+// chain keeps it from being locked to an IDE that isn't installed.
+type ScanDir struct {
+	Path string
+	Code string
+}
+
+// AppendUnopened folds filesystem-discovered directories (immediate subdirs of a
+// project root) into the merged list as "un-opened" projects — paths that never
+// appeared in any recents file. A dir already present (in recents or as a durable
+// pin) is left untouched, so opened projects keep their real IDE association and
+// activation timestamp; only never-opened dirs contribute a directory mtime and
+// their root's implied code. The combined list is re-sorted by sortByRecency so
+// un-opened entries interleave with recents by recency. Stubs, worktrees, and
+// ignored dirs are not filtered here — the existing emitSearch guards handle
+// them via the Stub/IsWorktree fields ProjectFromPath populates.
+func AppendUnopened(projects []Project, dirs []ScanDir, ignoreContent []string) []Project {
+	if len(dirs) == 0 {
+		return projects
+	}
+	have := make(map[string]bool, len(projects))
+	for _, p := range projects {
+		have[p.Path] = true
+	}
+	for _, d := range dirs {
+		if have[d.Path] {
+			continue
+		}
+		if p, ok := ProjectFromPath(d.Path, ignoreContent); ok {
+			p.Unopened = true
+			if d.Code != "" {
+				// Stamp the IDE implied by the root so Resolve opens it when
+				// installed; with no code it resolves via the generic fallback.
+				p.ProductionCode = d.Code
+				p.AllCodes = []string{d.Code}
+			}
+			projects = append(projects, p)
+			have[d.Path] = true // dedupe within the scan too (a root listed twice)
+		}
+	}
+	sortByRecency(projects)
+	return projects
 }
 
 // ProjectFromPath builds a Project for a bare directory path — used to surface a

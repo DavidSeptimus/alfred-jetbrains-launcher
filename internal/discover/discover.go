@@ -152,6 +152,29 @@ func FindShips(cfg config.Config) []ShipFile {
 	return out
 }
 
+// FindProjectDirs scans each project root one level deep and returns every
+// immediate subdirectory (cleaned absolute path). Files and dot-directories are
+// skipped; a missing root is skipped silently, mirroring Find's tolerance. These
+// are candidate "un-opened" projects surfaced by the `+` keyword variant;
+// stub/worktree/ignore filtering happens downstream, not here. The roots are the
+// effective ones (configured JB_PROJECT_ROOTS, or the auto-detected defaults).
+func FindProjectDirs(roots []string) []string {
+	var dirs []string
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue // root absent or unreadable — skip silently
+		}
+		for _, e := range entries {
+			if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			dirs = append(dirs, filepath.Clean(filepath.Join(root, e.Name())))
+		}
+	}
+	return dirs
+}
+
 func splitProductVersion(name string) (product, version string) {
 	m := productRe.FindStringSubmatch(name)
 	if m == nil {

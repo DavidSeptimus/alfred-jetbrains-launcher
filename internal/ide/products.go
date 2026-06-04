@@ -2,6 +2,11 @@
 // installed, and resolves which installed IDE should open a given project.
 package ide
 
+import (
+	"sort"
+	"strings"
+)
+
 // Product is a static definition of a JetBrains IDE product.
 type Product struct {
 	Code       string // production code, e.g. "IU"
@@ -86,4 +91,53 @@ func FamilyDisplay(family string) string {
 		return d
 	}
 	return family
+}
+
+// DefaultProjectDir is a conventional new-project directory plus the IDE it
+// implies — so an un-opened project found under an auto-detected root can still
+// resolve to the right IDE (a folder in GolandProjects implies GoLand).
+type DefaultProjectDir struct {
+	Name   string // directory name under $HOME, e.g. "GolandProjects"
+	Family string // launcher family, e.g. "goland"
+	Code   string // representative production code, e.g. "GO"
+}
+
+// familyPrimaryCode names the production code that represents a family when only
+// the family is known (the IDE implied by an auto-detected project root).
+// Dual-edition families name the paid edition; Resolve still falls back to
+// whichever edition of the family is actually installed.
+var familyPrimaryCode = map[string]string{
+	"idea": "IU", "pycharm": "PY", "webstorm": "WS", "goland": "GO",
+	"clion": "CL", "rubymine": "RM", "datagrip": "DB", "phpstorm": "PS",
+	"rider": "RD", "rustrover": "RR", "studio": "AI", "dataspell": "DS",
+	"aqua": "QA", "writerside": "WRS", "fleet": "FL", "air": "AIR",
+}
+
+// DefaultProjectDirs returns the conventional new-project directories JetBrains
+// IDEs create under $HOME — "<Name>Projects" for the classic IDEs and Android
+// Studio, "<Name>Workspaces" for Fleet and Air — each tagged with the IDE it
+// implies. Names are title-cased from the launcher family (Android Studio uses
+// its full product name, not the keyword); match them against the filesystem
+// case-insensitively, so "GolandProjects" still matches an on-disk
+// "GoLandProjects". Sorted by family for determinism.
+func DefaultProjectDirs() []DefaultProjectDir {
+	families := make([]string, 0, len(familyDisplay))
+	for f := range familyDisplay {
+		families = append(families, f)
+	}
+	sort.Strings(families)
+
+	out := make([]DefaultProjectDir, 0, len(families))
+	for _, f := range families {
+		base := strings.ToUpper(f[:1]) + f[1:] // title-case the single-token family
+		if f == "studio" {
+			base = "AndroidStudio" // folder is AndroidStudioProjects, not StudioProjects
+		}
+		suffix := "Projects"
+		if f == "fleet" || f == "air" {
+			suffix = "Workspaces"
+		}
+		out = append(out, DefaultProjectDir{Name: base + suffix, Family: f, Code: familyPrimaryCode[f]})
+	}
+	return out
 }
