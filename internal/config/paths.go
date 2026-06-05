@@ -26,6 +26,10 @@ type Config struct {
 	ExcludeWorktrees bool     // hide linked git worktrees from results (default true)
 	Terminal         string   // app name used by the "open in terminal" action
 	OpenCmd          string   // user command for the ⌃⇧ custom-open action ({path} = project)
+	TaskTerminal     string   // terminal app the task runner launches into (defaults to Terminal)
+	TaskTerminalCmd  string   // custom terminal launch template ({cmd}/{cwd}/{name}); overrides TaskTerminal
+	TaskNewWindow    bool     // default task launch opens a new window instead of a tab
+	TaskDisable      []string // task runners to disable (npm,make,just,task,gradle,maven)
 	IgnoreContent    []string // entry-name globs treated as non-content for stub detection
 	IgnoreProjects   []string // path/name globs; matching projects are hidden
 	Sort             string   // result order: recency|recency-asc|name|name-desc|path
@@ -44,6 +48,10 @@ const (
 	envExcludeWT    = "JB_EXCLUDE_WORKTREES" // "0"/"false" to include git worktrees
 	envTerminal     = "JB_TERMINAL"          // app name for the "open in terminal" action
 	envOpenCmd      = "JB_OPEN_CMD"          // custom shell command for the ⌃⇧ open action
+	envTaskTerminal = "JB_TASK_TERMINAL"     // terminal app the task runner launches into
+	envTaskTermCmd  = "JB_TASK_TERMINAL_CMD" // custom terminal launch template for tasks
+	envTaskWindow   = "JB_TASK_WINDOW"       // "1"/"true" → default task launch is a new window, not a tab
+	envTaskDisable  = "JB_TASK_DISABLE"      // comma-separated task runners to disable
 	envAlfredData   = "alfred_workflow_data"
 	envDataDir      = "JB_DATA_DIR"       // overrides the durable data directory
 	envIgnoreCont   = "JB_IGNORE_CONTENT" // comma-separated entry-name globs
@@ -150,6 +158,19 @@ func Load() Config {
 	// Custom open command (⌃⇧). Empty by default — the action stays inert until
 	// the user sets one (e.g. "code {path}").
 	cfg.OpenCmd = strings.TrimSpace(os.Getenv(envOpenCmd))
+
+	// Task runner: the terminal it launches into defaults to the same app as the
+	// "open in terminal" action, so a user who set one preference gets both. A
+	// custom template (JB_TASK_TERMINAL_CMD) overrides it.
+	cfg.TaskTerminal = strings.TrimSpace(os.Getenv(envTaskTerminal))
+	if cfg.TaskTerminal == "" {
+		cfg.TaskTerminal = cfg.Terminal
+	}
+	cfg.TaskTerminalCmd = strings.TrimSpace(os.Getenv(envTaskTermCmd))
+	if v := os.Getenv(envTaskWindow); v == "1" || strings.EqualFold(v, "true") {
+		cfg.TaskNewWindow = true
+	}
+	cfg.TaskDisable = parseList(envTaskDisable, nil)
 
 	cfg.IgnoreContent = parseList(envIgnoreCont, defaultIgnoreContent)
 	cfg.IgnoreProjects = parseList(envIgnoreProj, nil)

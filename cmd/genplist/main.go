@@ -81,6 +81,21 @@ func main() {
 	forgetUID := uid("action:forget")
 	pickUID := uid("sf:pick")
 	openPickUID := uid("action:openpick")
+	// Task runner: a standalone two-level `runtask` keyword (project picker → task
+	// list, both natively filterable because the chosen project lives in state).
+	// One launch action handles every row — its leading "kind" token selects pick
+	// / back / launch — so ↩ and the launch modifiers all route to it.
+	runtaskSfUID := uid("sf:runtask")
+	runtaskUID := uid("action:runtask")
+	runtaskKwVar := "JB_KW_RUNTASK"
+	// Rerun keyword: a one-row Script Filter showing the last task run, routed to
+	// the same launch action.
+	rerunSfUID := uid("sf:rerun")
+	rerunKwVar := "JB_KW_RERUN"
+	// Native "running in the background" notification for ⌥ launches — fired by the
+	// launch action printing a line, shown only when populated (same pattern as the
+	// update flow's notifications, not an osascript one).
+	taskNotifyUID := uid("output:task-notify")
 	updateApplyUID := uid("action:update")
 	// The unified-keyword update banner routes ↩ through a Conditional that sends
 	// the banner row (jb_action=update) to update-apply + a notification, and any
@@ -113,7 +128,23 @@ func main() {
 		// passes the project path as the query — we must NOT let it filter the
 		// IDE list against that path (which would hide every IDE).
 		scriptFilter(pickUID, "", `./jb ides --path "$1"`, "Open in a Different IDE", "Pick an installed IDE", false),
+		// The runtask keyword. It filters its own results (so both the project
+		// picker and the task list are type-to-filter), and the selected project is
+		// kept in state by the launch action — never in the query — so filtering is
+		// never fighting the project path.
+		runtaskFilter(runtaskSfUID, "{var:"+runtaskKwVar+"}"),
+		scriptAction(runtaskUID, `./jb runtask --spec "$1"`),
+		// Rerun keyword: shows the single most-recent task, re-runnable via the same
+		// launch action. filterResults=false (one row, nothing to filter).
+		scriptFilter(rerunSfUID, "{var:"+rerunKwVar+"}", `./jb tasks --rerun --query "$1"`,
+			"Rerun Last Task", "Re-run the task you most recently ran", false),
+		notification(taskNotifyUID, "Task runner", "{query}", true),
 	)
+	addUI(runtaskSfUID, 420, 1060)
+	addUI(runtaskUID, 760, 1060)
+	addUI(rerunSfUID, 420, 1200)
+	addUI(taskNotifyUID, 980, 1060)
+	objIcons = append(objIcons, iconRef{runtaskSfUID, "run"}, iconRef{runtaskUID, "run"}, iconRef{rerunSfUID, "run"})
 	addUI(customCmdUID, 760, 80)
 	addUI(revealUID, 760, 220)
 	addUI(copyUID, 760, 360)
@@ -129,6 +160,26 @@ func main() {
 
 	connections := map[string]any{}
 	connections[pickUID] = []any{conn(openPickUID, modNone)} // pick (ides) -> open-by-spec
+	// runtask rows -> the launch action. ↩ covers pick-project / back / run-tab
+	// (the action dispatches on the row's kind token); the modifiers add the other
+	// launch kinds for task rows (project rows disable them).
+	connections[runtaskSfUID] = []any{
+		conn(runtaskUID, modNone),
+		connSub(runtaskUID, modCmd, "Run in a new window"),
+		connSub(runtaskUID, modAlt, "Run in the background"),
+		connSub(runtaskUID, modCtrl, "Copy command"),
+		connSub(runtaskUID, modShift, "Run, then reset to the project picker"),
+	}
+	// Rerun keyword rows route to the same launch action (↩ / launch modifiers).
+	connections[rerunSfUID] = []any{
+		conn(runtaskUID, modNone),
+		connSub(runtaskUID, modCmd, "Rerun in a new window"),
+		connSub(runtaskUID, modAlt, "Rerun in the background"),
+		connSub(runtaskUID, modCtrl, "Copy command"),
+	}
+	// Launch action -> "running in background" notification (suppressed unless the
+	// action printed a line, i.e. only for ⌥ background launches).
+	connections[runtaskUID] = []any{conn(taskNotifyUID, modNone)}
 
 	// Update UI — release only, and surfaced solely through the in-`jb` banner
 	// (updateBanner in the binary emits the row; the Conditional in the loop wires
@@ -164,6 +215,11 @@ func main() {
 			connSub(customCmdUID, modCtrl+modShift, "Open with your custom command (e.g. VS Code)"),
 			connSub(pinUID, modCmd+modShift, "Pin / unpin"),
 			connSub(forgetUID, modCmd+modAlt, "Forget (hide)"),
+			// ⌥⇧ jumps straight into this project's tasks: it records the project as
+			// the runtask target (the item's "picktask" arg) via the launch action,
+			// which re-opens the runtask keyword in task mode. A fast lane into the
+			// standalone runtask keyword. (⌘⌃ was avoided — macOS reserves it.)
+			connSub(runtaskUID, modAlt+modShift, "Run a task in this project…"),
 		}
 	}
 
@@ -244,6 +300,12 @@ func main() {
 		kwConfig = append(kwConfig, keywordField(kwVar, k.Keyword, k.Title))
 		y += 120
 	}
+
+	// The standalone task-runner keyword, configurable like the others. Its
+	// default text ("runtask") backs the {var:JB_KW_RUNTASK} placeholder in the
+	// Script Filter and the reopen the launch action issues after each navigation.
+	kwConfig = append(kwConfig, keywordField(runtaskKwVar, "runtask", "Run a Task"))
+	kwConfig = append(kwConfig, keywordField(rerunKwVar, "rerun", "Rerun Last Task"))
 
 	plist := map[string]any{
 		"bundleid":                spec.Workflow.BundleID,
@@ -371,6 +433,18 @@ func scriptFilter(uid, keyword, script, title, subtext string, filterResults boo
 		"uid":     uid,
 		"version": 3,
 	}
+}
+
+// runtaskFilter builds the standalone two-level runtask keyword Script Filter.
+// filterResults=false: the binary filters its own rows by the query and always
+// returns at least one of its own items, so Alfred never sees an empty list to
+// backfill with file/web fallback results. (With Alfred filtering instead, a
+// query that matched no task left an empty set and Alfred padded it with random
+// files.)
+func runtaskFilter(uid, keyword string) map[string]any {
+	sf := scriptFilter(uid, keyword, `./jb tasks --runtask --query "$1"`, "Run a Task", "Pick a project, then a task to run", false)
+	sf["config"].(map[string]any)["runningsubtext"] = "Loading…"
+	return sf
 }
 
 func scriptAction(uid, script string) map[string]any {
@@ -536,6 +610,20 @@ func userConfig() []any {
 			},
 		},
 	}
+	taskTerminalPopup := map[string]any{
+		"type":        "popupbutton",
+		"variable":    "JB_TASK_TERMINAL",
+		"label":       "Task terminal",
+		"description": "Terminal the task runner (the runtask keyword) launches into. Terminal.app and iTerm get real tabs/windows; for others set a custom launch template below. Leave as Terminal to inherit, or pick one.",
+		"config": map[string]any{
+			"default": "Terminal",
+			"pairs": []any{
+				[]any{"Terminal", "Terminal"},
+				[]any{"iTerm", "iTerm"},
+				[]any{"Ghostty", "Ghostty"},
+			},
+		},
+	}
 	sortPopup := map[string]any{
 		"type":        "popupbutton",
 		"variable":    "JB_SORT",
@@ -560,6 +648,20 @@ func userConfig() []any {
 		terminalPopup,
 		tf("JB_OPEN_CMD", "Custom open command",
 			"Command run by the ⌃⇧ action. {path} → the project path, {name} → its folder name (both quoted for you — leave them unquoted). Runs in your login shell (a script path works too). Examples: code {path}  ·  ~/bin/open-project.sh {name} {path}",
+			""),
+		taskTerminalPopup,
+		map[string]any{
+			"type":        "checkbox",
+			"variable":    "JB_TASK_WINDOW",
+			"label":       "Task window",
+			"description": "When checked, ↩ runs a task in a new terminal window instead of a new tab (and ⌘↩ then does the opposite). Applies to the built-in terminals.",
+			"config":      map[string]any{"default": false, "text": "Open tasks in a new window (not a tab)"},
+		},
+		tf("JB_TASK_TERMINAL_CMD", "Custom task terminal command",
+			"Overrides the Task terminal above to launch tasks in any terminal. {cmd} → the task command, {cwd} → the project dir, {name} → its folder name ({cwd}/{name} quoted for you). Runs in your login shell. Examples: kitty @ launch --type=tab --cwd {cwd} {cmd}  ·  wezterm cli spawn --cwd {cwd} -- {cmd}",
+			""),
+		tf("JB_TASK_DISABLE", "Disable task runners",
+			"Comma-separated build systems to skip when listing tasks (npm, make, just, task, composer, deno, rake, gradle, maven, cargo, go, dotnet). Disabling gradle also skips its slow task enumeration. Leave empty to detect all.",
 			""),
 		sortPopup,
 		tf("JB_IGNORE_CONTENT", "Ignore content",
@@ -594,7 +696,9 @@ Search and open your recent JetBrains projects across **all** installed IDEs and
 - append ` + "`~`" + ` to any keyword (` + "`jb~`, `goland~`" + `) to include git worktrees.
 - append ` + "`+`" + ` to any keyword (` + "`jb+`, `idea+`" + `) to also include un-opened projects from your configured project roots.
 
-Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌃⇧ custom open command (e.g. VS Code) · ⌘⇧ pin/unpin · ⌘⌥ forget.
+Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌃⇧ custom open command (e.g. VS Code) · ⌘⇧ pin/unpin · ⌘⌥ forget · ⌥⇧ run a build-system task in this project.
+
+Run tasks with the ` + "`runtask`" + ` keyword — pick a project, then a task (npm / Make / just / Taskfile / Gradle / Maven), filtering at each step. ⌥⇧ on a ` + "`jb`" + ` result jumps straight to that project's tasks. On a task: ↩ new terminal tab · ⌘ new window · ⌥ background · ⌃ copy the command · ⇧ run then reset to the project picker. ` + "`runtask`" + ` stays scoped to the last project until you switch; ` + "`rerun`" + ` re-runs your most recent task.
 
 ---
 Not affiliated with or endorsed by JetBrains. IDE logos are trademarks of their

@@ -1,0 +1,11 @@
+go 1.23
+
+// Local multi-module workspace: the jb launcher and the extractable taskrunner
+// core are developed together. taskrunner has an independent module path so it
+// can later move to its own repo with zero import churn; until then this
+// workspace (and a replace directive in the launcher's go.mod) resolves it from
+// ./taskrunner.
+use (
+	.
+	./taskrunner
+)

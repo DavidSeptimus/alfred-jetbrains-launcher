@@ -38,6 +38,10 @@ reopen.
 - **Quick actions** — reveal in Finder, copy path, open in a terminal, pick a
   different IDE, or run your own open command (VS Code, Cursor, …), all from
   modifier keys.
+- **Run build tasks** — the `runtask` keyword (or ⌥⇧ on any project) finds and
+  runs a project's tasks in a terminal: npm/pnpm/yarn/bun, Make, just, Taskfile,
+  **Gradle** (its *real* tasks, including custom ones like `runIde`), Maven,
+  Composer, Deno, Rake, Cargo, Go, and .NET — with `rerun` to repeat the last one.
 - **Tidy by default** — hides stale entries whose folder is gone, stub dirs with
   no visible files (only leftover `.idea`/`.git`/dotfiles), and linked git
   worktrees (with an opt-in to show them).
@@ -115,12 +119,12 @@ sets `release`).
 
 ## Usage
 
-| Type                                                                                                                                                    | What you get                                                       |
-|---------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
-| `jb <query>`                                                                                                                                            | All recent projects, each opening in its last-used IDE             |
-| `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                 |
-| `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                   |
-| `<keyword>~`                                                                                                                                            | The same search, **including git worktrees** (`jb~`, `goland~`, …) |
+| Type                                                                                                                                                    | What you get                                                                                                                                |
+|---------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| `jb <query>`                                                                                                                                            | All recent projects, each opening in its last-used IDE                                                                                      |
+| `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                                                                                          |
+| `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                                                                                            |
+| `<keyword>~`                                                                                                                                            | The same search, **including git worktrees** (`jb~`, `goland~`, …)                                                                          |
 | `<keyword>+`                                                                                                                                            | The same search, **plus un-opened projects** found in your configured [project roots](#un-opened-projects-the--variant) (`jb+`, `idea+`, …) |
 
 Alfred fuzzy-matches your query against the project name and its path
@@ -169,6 +173,7 @@ whatever pin/forget state you'd attached to it.
 | ⌃⇧  | Open with a custom command (`JB_OPEN_CMD`, e.g. VS Code) — off until set     |
 | ⌘⇧  | Pin / unpin (pinned float to the top, marked ★) — stays open, list refreshes |
 | ⌘⌥  | Forget — hide from the launcher (stays open; `jb forget --clear` restores)   |
+| ⌥⇧  | Run a build-system task in this project — jumps into `runtask` scoped to it (see [Running tasks](#running-tasks)) |
 
 ### Which IDE opens a project
 
@@ -195,24 +200,84 @@ pick from your installed IDEs:
 
 ---
 
+## Running tasks
+
+Beyond opening a project, the workflow can **run its build-system tasks** in a
+terminal. Two ways in:
+
+- **`runtask`** — a standalone keyword: pick a project, then pick a task. Both
+  steps filter as you type.
+- **⌥⇧ on any `jb` result** — jumps straight into that project's tasks.
+
+It detects tasks from whatever the project uses, with no setup:
+
+| Build system | Source | Notes |
+|---|---|---|
+| npm / pnpm / yarn / bun | `package.json` | picks the package manager from your lockfile |
+| Make | `Makefile` | |
+| just · Taskfile · Rake | `justfile` · `Taskfile.yml` · `Rakefile` | needs the tool installed |
+| **Gradle** | `build.gradle[.kts]` | runs `./gradlew tasks` to list the project's **real** tasks (including custom ones like `runIde`, `buildPlugin`) — cached, so it's instant after the first time |
+| Maven | `pom.xml` | common lifecycle goals |
+| Cargo · Go · .NET | `Cargo.toml` · `go.mod` · `*.csproj`/`*.sln` | common commands (`build`/`test`/`run`/…) |
+| Composer · Deno | `composer.json` · `deno.json[c]` | scripts / tasks |
+
+A task whose tool isn't on your `PATH` still shows, but greyed (you can still
+copy its command). Tasks run in your **login shell**, so anything on your `PATH`
+resolves.
+
+### Launching a task
+
+Each task runs in its own terminal session, so you can fire several in parallel.
+Modifiers on a task:
+
+| Key | Action |
+|-----|--------|
+| ↩   | Run in a new terminal **tab** |
+| ⌘   | Run in a new **window** |
+| ⌥   | Run in the **background** (no terminal; notifies when it finishes) |
+| ⌃   | **Copy** the command to the clipboard |
+| ⇧   | Run, then **reset** to the project picker |
+
+`runtask` **stays scoped to the last project** you ran something in — reopen it
+and you're back on that project's tasks (handy for iterating). Pick **⬅ Switch
+project** (or use ⇧ above) to go back to the picker. The **`rerun`** keyword
+re-runs your most recent task directly.
+
+The launch terminal is configurable: **Terminal.app**, **iTerm2**, and
+**Ghostty** are built in, or set a `JB_TASK_TERMINAL_CMD` template for any other
+terminal (kitty, WezTerm, …). The **Task window** toggle (`JB_TASK_WINDOW`) flips
+the ↩/⌘ default if you'd rather a new window than a tab. Real Terminal.app /
+Ghostty *tabs* use a System Events keystroke, which asks for Accessibility
+permission the first time.
+
+> Task detection isn't JetBrains-specific — it works for any project in your
+> recents. Clear the `runtask` / `rerun` keyword fields (or `JB_TASK_DISABLE` a
+> runner) if you don't want it.
+
+---
+
 ## Configuration
 
 Open **Configure Workflow…** in Alfred:
 
 ![The Configure Workflow panel — worktrees, terminal app, sort order, ignore patterns, and path overrides](docs/img/configure.png)
 
-| Setting               | Variable               | Default                          | Effect                                                                                                                                         |
-|-----------------------|------------------------|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| Exclude git worktrees | `JB_EXCLUDE_WORKTREES` | on                               | Hide linked git worktrees (use `<keyword>~` to include per-search)                                                                             |
-| Terminal app          | `JB_TERMINAL`          | Terminal                         | App for the ⇧ open-in-terminal action (iTerm, Warp, Ghostty, …)                                                                                |
-| Custom open command   | `JB_OPEN_CMD`          | _(none)_                         | Command for the ⌃⇧ action; `{path}` → project path (quoted for you). Runs in your login shell. See [Custom open command](#custom-open-command) |
-| Sort order            | `JB_SORT`              | Most recent first                | Result order: recency / least-recent / name (A–Z, Z–A) / path. Alfred re-ranks by relevance once you type a query                              |
-| Ignore content        | `JB_IGNORE_CONTENT`    | `build,dist,node_modules`        | Comma-separated entry-name globs treated as non-content. A project whose only contents are these (plus hidden files) is hidden as a stub       |
-| Ignore projects       | `JB_IGNORE_PROJECTS`   | _(none)_                         | Comma-separated globs matched against a project's name and full path; matches are hidden (e.g. `*-scratch`, `~/Downloads/*`)                   |
-| Config roots          | `JB_CONFIG_ROOTS`      | standard JetBrains & Google dirs | `:`-separated dirs holding per-version IDE config dirs                                                                                         |
-| Application folders   | `JB_APP_ROOTS`         | `/Applications:~/Applications`   | `:`-separated folders scanned for JetBrains `.app` bundles                                                                                     |
+| Setting               | Variable               | Default                          | Effect                                                                                                                                                                      |
+|-----------------------|------------------------|----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Exclude git worktrees | `JB_EXCLUDE_WORKTREES` | on                               | Hide linked git worktrees (use `<keyword>~` to include per-search)                                                                                                          |
+| Terminal app          | `JB_TERMINAL`          | Terminal                         | App for the ⇧ open-in-terminal action (iTerm, Warp, Ghostty, …)                                                                                                             |
+| Custom open command   | `JB_OPEN_CMD`          | _(none)_                         | Command for the ⌃⇧ action; `{path}` → project path (quoted for you). Runs in your login shell. See [Custom open command](#custom-open-command)                              |
+| Task terminal         | `JB_TASK_TERMINAL`     | Terminal                         | Terminal the `runtask` keyword launches into (Terminal, iTerm, Ghostty)                                                                                                     |
+| Task window           | `JB_TASK_WINDOW`       | off                              | Run tasks in a new window instead of a tab by default (↩ ↔ ⌘↩ swap)                                                                                                         |
+| Custom task terminal  | `JB_TASK_TERMINAL_CMD` | _(none)_                         | Launch tasks in any terminal: `{cmd}` / `{cwd}` / `{name}` (e.g. `kitty @ launch --type=tab --cwd {cwd} {cmd}`). Overrides the built-in                                     |
+| Disable task runners  | `JB_TASK_DISABLE`      | _(none)_                         | Comma-separated build systems to skip (npm, make, just, task, composer, deno, rake, gradle, maven, cargo, go, dotnet)                                                       |
+| Sort order            | `JB_SORT`              | Most recent first                | Result order: recency / least-recent / name (A–Z, Z–A) / path. Alfred re-ranks by relevance once you type a query                                                           |
+| Ignore content        | `JB_IGNORE_CONTENT`    | `build,dist,node_modules`        | Comma-separated entry-name globs treated as non-content. A project whose only contents are these (plus hidden files) is hidden as a stub                                    |
+| Ignore projects       | `JB_IGNORE_PROJECTS`   | _(none)_                         | Comma-separated globs matched against a project's name and full path; matches are hidden (e.g. `*-scratch`, `~/Downloads/*`)                                                |
+| Config roots          | `JB_CONFIG_ROOTS`      | standard JetBrains & Google dirs | `:`-separated dirs holding per-version IDE config dirs                                                                                                                      |
+| Application folders   | `JB_APP_ROOTS`         | `/Applications:~/Applications`   | `:`-separated folders scanned for JetBrains `.app` bundles                                                                                                                  |
 | Project roots         | `JB_PROJECT_ROOTS`     | auto-detected `~/<IDE>Projects`  | `:`-separated dirs whose immediate subfolders are offered as un-opened projects via the `<keyword>+` variant. Empty = auto-detect the conventional folders; set to override |
-| Toolbox script dirs   | `JB_TOOLBOX_DIR`       | standard Toolbox scripts dir     | `:`-separated dirs of Toolbox launcher scripts                                                                                                 |
+| Toolbox script dirs   | `JB_TOOLBOX_DIR`       | standard Toolbox scripts dir     | `:`-separated dirs of Toolbox launcher scripts                                                                                                                              |
 
 The path fields are **pre-filled with their defaults**, so you can see and edit
 the exact values; clear a field to restore its default. `jb doctor` prints the
@@ -228,20 +293,20 @@ name. With no `{path}` token the path is appended as the last argument. The
 command runs in your **login shell**, so anything on your `PATH` resolves — and
 since it's just a shell line, a path to a script works too.
 
-| Tool                                                          | `JB_OPEN_CMD`                                   |
-|---------------------------------------------------------------|-------------------------------------------------|
-| VS Code                                                       | `code {path}`                                   |
-| Cursor                                                        | `cursor {path}`                                 |
-| Zed                                                           | `zed {path}`                                    |
-| Your own script                                               | `~/bin/open-project.sh {name} {path}`           |
+| Tool            | `JB_OPEN_CMD`                         |
+|-----------------|---------------------------------------|
+| VS Code         | `code {path}`                         |
+| Cursor          | `cursor {path}`                       |
+| Zed             | `zed {path}`                          |
+| Your own script | `~/bin/open-project.sh {name} {path}` |
 
 Until you set it, the ⌃⇧ row stays visible but inert (it tells you to configure
 it). If a CLI isn't on your login-shell `PATH`, use its absolute path.
 
 ### Keywords
 
-Every keyword (`jb`, `idea`, …, `studio`, `air`) has its own field in the same
-panel, so you can rename any that you like. This matters when a keyword is also a
+Every keyword (`jb`, `idea`, …, `studio`, `air`, plus `runtask` and `rerun`) has
+its own field in the same panel, so you can rename any that you like. This matters when a keyword is also a
 word Alfred's default search matches: typing `studio`, for example, mixes your
 projects with file/app hits for *Visual **Studio** Code* and other "studio"
 files — rename it to something distinctive like `astudio` and it triggers
@@ -294,6 +359,8 @@ The binary speaks Alfred Script Filter JSON on stdout:
 ./build/jb-bundle/jb search | jq '.items | length'
 ./build/jb-bundle/jb search --product goland | jq '.items[].title'
 ./build/jb-bundle/jb search --worktrees | jq '.items | length'
+./build/jb-bundle/jb tasks --path ~/myproject | jq '.items[].title'   # build-system tasks detected for a project
+./build/jb-bundle/jb tasks --runtask | jq '.items[].title'           # what the `runtask` keyword emits (project picker, or the last project's tasks)
 ./build/jb-bundle/jb refresh         # rebuild the cache
 ./build/jb-bundle/jb doctor          # diagnostics: detected IDEs, roots, why things are hidden
 ```
@@ -307,17 +374,23 @@ update check, and the first-run quarantine self-heal — are diagrammed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
-cmd/jb            workflow backend: search / ides / open / action / refresh
+cmd/jb            workflow backend: search / ides / open / action / tasks / runtask / refresh
 cmd/genplist      generates info.plist + per-object canvas icons from workflow/ides.json
 internal/discover find every recent file across all version dirs
 internal/recent   parse + merge/dedupe (worktree, .idea-only, existence checks)
 internal/ide      product catalogue, installed-IDE detection, resolution, running check
 internal/launch   open / reveal / copy / terminal / custom open command
+internal/tasklaunch  run a task in a terminal tab/window, background, or copy
 internal/alfred   Script Filter JSON
 internal/cache    mtime-keyed cache of the merged list
+taskrunner/       standalone, Alfred-agnostic module: detect build-system tasks (own go.mod)
 workflow/ides.json  the IDE/keyword table that drives the generated plist
 assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow icon
+scripts/gen-task-icons.sh  (re)generate the task-runner icons from JetBrains' icon set
 ```
+
+The task runner's design and the `runtask` flow are documented in
+[docs/TASK-RUNNER.md](docs/TASK-RUNNER.md).
 
 | Target                   | Does                                                                       |
 |--------------------------|----------------------------------------------------------------------------|
@@ -364,7 +437,13 @@ The bundled IDE logos are JetBrains product logos and the JetBrains Toolbox logo
 [JetBrains Website Terms of Use](https://www.jetbrains.com/legal/docs/company/useterms/)
 and [Brand Guidelines](https://www.jetbrains.com/company/brand/). Icons for IDEs
 you have installed — including Android Studio, Fleet, and Air — are drawn by
-macOS from the application itself and aren't bundled. See
+macOS from the application itself and aren't bundled.
+
+The task runner's icons are JetBrains' IntelliJ icons (from the local IDE under
+the Apache 2.0 license, and from the public [IntelliJ Icons
+catalog](https://intellij-icons.jetbrains.design)); the underlying tool marks
+(npm, Gradle, Maven, Go, Rust, PHP, Ruby, .NET) are trademarks of their projects,
+shown for identification only. See
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 Inspired by [bchatard/alfred-jetbrains](https://github.com/bchatard/alfred-jetbrains).

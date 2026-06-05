@@ -6,6 +6,8 @@
 //	jb ides   --path <p>                            Script Filter JSON of IDEs to open <p> with
 //	jb open   --path <p> [--product <family>] | --spec <code\x1fdatadir\x1fpath>
 //	jb action --do reveal|copy|terminal --path <p>
+//	jb tasks  --path <p> [--enumerate-gradle]      Script Filter JSON of a project's build-system tasks
+//	jb runtask --spec <kind\x1fcwd\x1fcmdline>      launch a task (tab|window|bg|copy)
 //	jb pin    --path <p>                            toggle a project's pinned state
 //	jb forget --path <p> | --clear                  hide a project (or restore all)
 //	jb update [--check | --apply]                    check for / install a newer release
@@ -46,7 +48,7 @@ var (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jb <search|ides|open|action|pin|forget|update|refresh|doctor>")
+		fmt.Fprintln(os.Stderr, "usage: jb <search|ides|open|action|tasks|runtask|pin|forget|update|refresh|doctor>")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -58,6 +60,10 @@ func main() {
 		cmdOpen(os.Args[2:])
 	case "action":
 		cmdAction(os.Args[2:])
+	case "tasks":
+		cmdTasks(os.Args[2:])
+	case "runtask":
+		cmdRuntask(os.Args[2:])
 	case "pin":
 		cmdPin(os.Args[2:])
 	case "forget":
@@ -312,6 +318,16 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 				"ctrl+shift": openCmdMod(cfg.OpenCmd),
 				"cmd+shift":  {Subtitle: pinLabel},
 				"cmd+alt":    {Subtitle: "Forget (hide from this list)"},
+				// ⌥⇧ jumps into the runtask keyword scoped to this project: the
+				// "picktask" arg routes through the launch action, which records the
+				// project as the runtask target and re-opens runtask on its tasks. Valid
+				// even with no IDE installed, since running tasks doesn't need one. (⌥⇧,
+				// not ⌘⌃ — macOS reserves ⌘⌃ chords system-wide.)
+				"alt+shift": {
+					Subtitle: "Run a task in this project…",
+					Arg:      "picktask" + specSep + p.Path,
+					Valid:    alfred.BoolPtr(true),
+				},
 			},
 		}
 		if pinnedNow {
@@ -820,6 +836,33 @@ func iconPath(family string) string {
 		return def
 	}
 	return p
+}
+
+// existingIcon returns the absolute path to icons/<name>.png if it exists, else
+// "". Used to resolve task icons with a chain of fallbacks.
+func existingIcon(name string) string {
+	if name == "" {
+		return ""
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if p := filepath.Join(wd, "icons", name+".png"); fileExists(p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// iconPathOr returns icons/<name>.png if present, else icons/<fallback>.png if
+// present, else default.png — for task rows that prefer a per-runner icon but
+// fall back to the generic run icon.
+func iconPathOr(name, fallback string) string {
+	if p := existingIcon(name); p != "" {
+		return p
+	}
+	if p := existingIcon(fallback); p != "" {
+		return p
+	}
+	return iconPath("")
 }
 
 func fileExists(p string) bool {

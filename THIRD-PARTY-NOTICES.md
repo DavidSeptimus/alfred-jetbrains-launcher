@@ -5,8 +5,10 @@ This file lists third-party material distributed with, or used by, this project.
 ## Source code
 
 The `jb` binary is written in Go and uses **only the Go standard library** — it
-has no third-party module dependencies (`go.mod` declares no `require`s). No
-third-party source code is bundled.
+has no third-party module dependencies. (`go.mod` requires one module,
+`alfred-taskrunner`, which is this repository's own task-detection core,
+developed in `./taskrunner` and resolved locally via a `replace` directive — not
+an external dependency.) No third-party source code is bundled.
 
 ## Bundled logos and product icons
 
@@ -26,6 +28,26 @@ Brand Guidelines.
 
 - Brand assets: <https://www.jetbrains.com/company/brand/>
 - Website Terms of Use: <https://www.jetbrains.com/legal/docs/company/useterms/>
+
+### Task-runner icons
+
+The task runner's icons are rasterized from JetBrains' IntelliJ icon set:
+
+- The run/execute arrow (the `runtask` keyword + fallback for runners without a
+  dedicated icon) and the npm, Gradle, and Maven marks are extracted from the
+  locally installed **IntelliJ IDEA**, distributed under the **Apache License
+  2.0**, and reproduced here under that license.
+- The Go, Cargo (Rust), Composer (PHP), Rake (Ruby), and .NET marks are pulled
+  from the public **IntelliJ Icons catalog**
+  (<https://intellij-icons.jetbrains.design>), JetBrains' resource for plugin
+  authors, since those product IDEs aren't installed locally.
+
+The underlying language/tool marks (npm, Gradle, Maven, Go, Rust, PHP, Ruby,
+.NET) are trademarks of their respective projects, shown for identification
+only. Regenerate with `scripts/gen-task-icons.sh`.
+
+- Apache License 2.0: <https://www.apache.org/licenses/LICENSE-2.0>
+- IntelliJ icon guidelines: <https://jetbrains.design/intellij/principles/icons/>
 
 ## No affiliation
 
