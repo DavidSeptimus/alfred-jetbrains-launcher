@@ -658,7 +658,7 @@ func userConfig() []any {
 			"config":      map[string]any{"default": false, "text": "Open tasks in a new window (not a tab)"},
 		},
 		tf("JB_TASK_TERMINAL_CMD", "Custom task terminal command",
-			"Overrides the Task terminal above to launch tasks in any terminal. {cmd} → the task command, {cwd} → the project dir, {name} → its folder name ({cwd}/{name} quoted for you). Runs in your login shell. Examples: kitty @ launch --type=tab --cwd {cwd} {cmd}  ·  wezterm cli spawn --cwd {cwd} -- {cmd}",
+			"Overrides the Task terminal above to launch tasks in any terminal. {cmd} → the task command (raw), {cwd} → the project dir, {name} → its folder name ({cwd}/{name} quoted for you). The template runs in your login shell, which under Alfred has a minimal PATH — so launch the terminal via `open` (found regardless of PATH) and have the task source your shell rc so its own PATH (asdf/nvm/pyenv) loads. Examples: open -na kitty.app --args --hold -d {cwd} /bin/zsh -lc \"source ~/.zshrc; {cmd}\"  ·  open -na WezTerm.app --args start --cwd {cwd} -- /bin/zsh -lc \"source ~/.zshrc; {cmd}; exec /bin/zsh -il\"",
 			""),
 		tf("JB_TASK_DISABLE", "Disable task runners",
 			"Comma-separated build systems to skip when listing tasks (npm, make, just, task, composer, deno, rake, gradle, maven, cargo, go, dotnet). Disabling gradle also skips its slow task enumeration. Leave empty to detect all.",

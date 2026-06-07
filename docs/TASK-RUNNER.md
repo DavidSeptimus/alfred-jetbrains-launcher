@@ -230,9 +230,23 @@ arg, so launching needs no re-detection.
   command (needs Accessibility, like the Terminal.app tab path). kitty/WezTerm/Warp
   go through the custom template.
 - **Custom template** escape hatch like `OpenCmd` (`JB_TASK_TERMINAL_CMD`): tokens
-  `{cmd}` (raw command), `{cwd}`/`{name}` (`shellQuote`-spliced); run via login
-  shell. Examples in the config UI: `kitty @ launch --type=tab --cwd {cwd} {cmd}`,
-  `wezterm cli spawn --cwd {cwd} -- {cmd}`.
+  `{cmd}` (raw command), `{cwd}`/`{name}` (`shellQuote`-spliced); the template runs
+  via the login shell — which under Alfred has a **minimal PATH** (no
+  `/opt/homebrew/bin`). Two consequences the examples must handle: (1) launch the
+  terminal via `open -na <App>.app` (found by Launch Services regardless of PATH) —
+  a bare `wezterm`/`kitty` binary name fails with `exit status 127`; (2) make the
+  task **source the user's shell rc** so its `~/.zshrc` PATH (asdf/nvm/pyenv) loads,
+  else tasks fail with `command not found`. Verified config-UI examples:
+  `open -na kitty.app --args --hold -d {cwd} /bin/zsh -lc "source ~/.zshrc; {cmd}"`,
+  `open -na WezTerm.app --args start --cwd {cwd} -- /bin/zsh -lc "source ~/.zshrc; {cmd}; exec /bin/zsh -il"`.
+  Notes: `-lc` (non-interactive) runs the task — `-ilc` loads the rc too but a
+  directly-`exec`'d interactive shell trips `zsh: can't set tty pgrp` warnings.
+  Keep-open differs per terminal: kitty has a native `--hold`; WezTerm has no hold
+  flag, so the trailing `exec /bin/zsh -il` keeps the window open *and* makes that
+  interactive shell the foreground process (clean job control). The `exec` trick
+  does *not* hold a kitty window open — hence `--hold` there. Avoid
+  `kitty @ launch` / `wezterm cli spawn`: they need remote control / a running
+  instance and exec the command with no shell, so no rc files are sourced.
 - **Terminal.app tabs:** uses the System Events ⌘T route → a one-time macOS
   Accessibility permission prompt (accepted tradeoff; document so it doesn't read
   as a bug). Other terminals get native tabs without a prompt.
