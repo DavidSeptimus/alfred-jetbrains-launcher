@@ -90,6 +90,14 @@ func (s Spec) runInTerminal() error {
 // runGhostty opens the task in Ghostty. A new window uses `open -na Ghostty
 // --args -e …` (robust, no permissions).
 //
+// The shell is run as an INTERACTIVE login shell (`-ilc`): unlike Terminal.app
+// and iTerm — which spawn the profile's interactive shell themselves — this path
+// execs the shell directly, so without `-i` it would skip ~/.zshrc. Many users
+// put their PATH there (asdf, nvm, pyenv, rbenv via oh-my-zsh), so a login-only
+// `-lc` shell fails to find tools the task needs (e.g. `gofmt: command not
+// found`). Ghostty gives the command a real TTY, so an interactive shell is safe
+// here (the no-TTY background path deliberately stays login-only).
+//
 // The tab path is deliberately BRITTLE and best-effort. As of Ghostty 1.3.1
 // there is no scriptable way to run a command in a new tab: no `+new-tab` CLI
 // action and no AppleScript dictionary. So we synthesise it by driving the ⌘T
@@ -104,8 +112,8 @@ func (s Spec) runInTerminal() error {
 func (s Spec) runGhostty() error {
 	if s.Kind == KindWindow {
 		shell := loginShell()
-		line := s.shellLine() + "; exec " + shell + " -l"
-		return execCommand("open", "-na", "Ghostty", "--args", "-e", shell, "-lc", line).Run()
+		line := s.shellLine() + "; exec " + shell + " -il"
+		return execCommand("open", "-na", "Ghostty", "--args", "-e", shell, "-ilc", line).Run()
 	}
 	// New tab: open one with ⌘T (new tab inherits the cwd), then type the command
 	// into its interactive shell, which stays open afterwards to show output.

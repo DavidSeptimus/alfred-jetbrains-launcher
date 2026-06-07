@@ -2,6 +2,7 @@ package tasklaunch
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,14 @@ func TestGhosttyWindowUsesOpenDashE(t *testing.T) {
 	}
 	if !strings.Contains(a, "cd '/p' && make build") {
 		t.Errorf("missing cd+command; got %v", *got)
+	}
+	// The task shell must be INTERACTIVE (-ilc) so ~/.zshrc-based PATH setup
+	// (asdf/nvm/pyenv) is loaded; otherwise tools like gofmt aren't found.
+	if !slices.Contains(*got, "-ilc") {
+		t.Errorf("ghostty window should run an interactive login shell (-ilc); got %v", *got)
+	}
+	if !strings.Contains(a, "; exec "+loginShell()+" -il") { // kept-open shell stays interactive too
+		t.Errorf("ghostty window should exec an interactive login shell to stay open; got %v", *got)
 	}
 }
 
