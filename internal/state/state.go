@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // PinInfo records the IDE association captured when a project was pinned, so a
@@ -19,13 +20,26 @@ type PinInfo struct {
 	DataDir string `json:"dataDir,omitempty"` // source version dir, e.g. "GoLand2026.1"
 }
 
+// LaunchInfo records the IDE a project was last launched with *from this
+// workflow*, with the time it happened. It is applied as a *loose* override of
+// the merged recents/ship association: it wins only while no genuine recents or
+// ship entry is newer than At — so a project the user has since opened some
+// other way reverts to that newer reality (see applyLaunchOverrides).
+type LaunchInfo struct {
+	Code    string    `json:"code,omitempty"`    // productionCode actually launched, e.g. "IU"
+	DataDir string    `json:"dataDir,omitempty"` // its version config dir, e.g. "IntelliJIdea2026.1"
+	At      time.Time `json:"at,omitempty"`      // when the launch happened (for loose precedence)
+}
+
 // State is the persisted set of pinned and hidden project paths (canonical).
 // PinMeta is keyed by pinned path; absent keys (e.g. older state files) simply
-// fall back to IDE-agnostic resolution.
+// fall back to IDE-agnostic resolution. Launched is keyed by project path and
+// records the IDE last opened through the workflow.
 type State struct {
-	Pinned  []string           `json:"pinned"`
-	Hidden  []string           `json:"hidden"`
-	PinMeta map[string]PinInfo `json:"pinMeta,omitempty"`
+	Pinned   []string              `json:"pinned"`
+	Hidden   []string              `json:"hidden"`
+	PinMeta  map[string]PinInfo    `json:"pinMeta,omitempty"`
+	Launched map[string]LaunchInfo `json:"launched,omitempty"`
 }
 
 func file(dataDir string) string { return filepath.Join(dataDir, "state.json") }
@@ -87,6 +101,25 @@ func (s *State) ClearPinMeta(p string) { delete(s.PinMeta, p) }
 func (s State) PinInfoFor(p string) (PinInfo, bool) {
 	pi, ok := s.PinMeta[p]
 	return pi, ok
+}
+
+// SetLaunched records the IDE a project was last opened with via the workflow,
+// stamped with the launch time. An empty code and dir is a no-op, so a launch
+// with no resolved IDE (which can't happen in practice) never creates an entry.
+func (s *State) SetLaunched(p, code, dataDir string, at time.Time) {
+	if code == "" && dataDir == "" {
+		return
+	}
+	if s.Launched == nil {
+		s.Launched = map[string]LaunchInfo{}
+	}
+	s.Launched[p] = LaunchInfo{Code: code, DataDir: dataDir, At: at}
+}
+
+// LaunchedFor returns the IDE a path was last launched with via the workflow.
+func (s State) LaunchedFor(p string) (LaunchInfo, bool) {
+	li, ok := s.Launched[p]
+	return li, ok
 }
 
 // Hide adds a path to the hidden set (no-op if already hidden).

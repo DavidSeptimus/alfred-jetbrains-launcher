@@ -88,18 +88,71 @@ func loadProjects(cfg config.Config) []recent.Project {
 	ships := discover.FindShips(cfg)
 	roots := effectiveProjectRoots(cfg)
 	fp := cache.Fingerprint(cfg, files, ships, rootPaths(roots))
-	if projects, ok := cache.Load(cfg, fp); ok {
+	projects, ok := cache.Load(cfg, fp)
+	if !ok {
+		projects = recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
+		// Fold each project root's immediate subdirs in as un-opened projects, tagged
+		// with the IDE the root implies. They are cached alongside recents (one shared
+		// cache for both `jb` and `jb+`); emitSearch hides them unless `+` is used.
+		if scan := scanUnopened(roots); len(scan) > 0 {
+			projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
+		}
+		cache.Save(cfg, fp, projects)
+	}
+	// Re-stamp each project with the IDE it was last launched with via the
+	// workflow. This is applied at read time (not baked into the cache) so it
+	// takes effect on a cache hit and clears immediately. It fixes the case where
+	// opening a project in IDE X through this launcher doesn't change its
+	// displayed IDE: the merge derives the IDE from recents/ship timestamps, and
+	// the IDE we launched may not record that open promptly (or at all) for the
+	// exact path — e.g. IntelliJ buffers recentProjects.xml until close, while
+	// another IDE (Air/Fleet) has a more recent timestamp for the same path.
+	return applyLaunchOverrides(cfg, projects)
+}
+
+// applyLaunchOverrides re-stamps a project's IDE association from the workflow's
+// own launch history (see state.LaunchInfo) as a *loose* override: the launched
+// IDE wins only while no genuine recents/ship entry is newer than the launch.
+// project.Timestamp is the most-recent activation across all merged sources, so
+// once the user opens the project some other way (its real recents/ship entry
+// advancing past the launch time) that reality takes precedence again. This does
+// not depend on the launched IDE recording its own recents entry promptly, but
+// also won't pin a project against a clearly newer open elsewhere.
+func applyLaunchOverrides(cfg config.Config, projects []recent.Project) []recent.Project {
+	st := state.Load(cfg.DataDir)
+	if len(st.Launched) == 0 {
 		return projects
 	}
-	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
-	// Fold each project root's immediate subdirs in as un-opened projects, tagged
-	// with the IDE the root implies. They are cached alongside recents (one shared
-	// cache for both `jb` and `jb+`); emitSearch hides them unless `+` is used.
-	if scan := scanUnopened(roots); len(scan) > 0 {
-		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
+	for i := range projects {
+		li, ok := st.LaunchedFor(projects[i].Path)
+		if !ok {
+			continue
+		}
+		// A recents/ship entry newer than our launch supersedes it. (A zero launch
+		// time predates this field and is treated as always-applicable.)
+		if !li.At.IsZero() && projects[i].Timestamp.After(li.At) {
+			continue
+		}
+		projects[i].ProductionCode = li.Code
+		projects[i].SourceDataDir = li.DataDir
+		// Keep AllCodes inclusive (front) so per-IDE keyword matching still finds
+		// the project under the IDE it was launched with.
+		if li.Code != "" {
+			projects[i].AllCodes = prependUnique(projects[i].AllCodes, li.Code)
+		}
 	}
-	cache.Save(cfg, fp, projects)
 	return projects
+}
+
+// prependUnique returns codes with code at the front, removing any later dup.
+func prependUnique(codes []string, code string) []string {
+	out := []string{code}
+	for _, c := range codes {
+		if c != code {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // projectRoot is a scanned root plus the production code its folder implies
@@ -465,6 +518,13 @@ func cmdOpen(args []string) {
 	if err := launch.Open(target, p); err != nil {
 		fail(fmt.Sprintf("open: %v", err))
 	}
+	// Record the IDE actually launched (with the time) so subsequent runs
+	// associate this project with it until a newer recents/ship entry supersedes
+	// it (see applyLaunchOverrides). Best-effort: the open already happened, so a
+	// state-write failure must not surface as an error.
+	st := state.Load(cfg.DataDir)
+	st.SetLaunched(p, target.Code, target.DataDir, time.Now())
+	_ = state.Save(cfg.DataDir, st)
 }
 
 func lookupByPath(cfg config.Config, path string) (recent.Project, bool) {
