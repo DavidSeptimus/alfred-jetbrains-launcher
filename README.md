@@ -209,6 +209,8 @@ terminal. Two ways in:
   steps filter as you type.
 - **⌥⇧ on any `jb` result** — jumps straight into that project's tasks.
 
+![Typing runtask to pick a project, then choosing a detected build task to run it in a terminal](docs/img/runtask.gif)
+
 It detects tasks from whatever the project uses, with no setup:
 
 | Build system | Source | Notes |
