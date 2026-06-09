@@ -35,10 +35,10 @@ reopen.
 - **Un-opened projects too** — the `+` variant (`jb+`, `idea+`) surfaces
   freshly-cloned projects you've never opened, auto-detecting your
   `~/<IDE>Projects` folders (override via config) and kept out of the default list.
-- **Every worktree on demand** — the `~` variant (`jb~`, `idea~`) surfaces every
-  linked **git worktree** of your projects, found on disk via git (wherever they
-  live — e.g. `.worktrees/…`), not just ones you've already opened, and kept out
-  of the default list.
+- **A dedicated worktree list** — the `~` variant (`jb~`, `idea~`) shows *only*
+  your linked **git worktrees**, found on disk via git (wherever they live — e.g.
+  `.worktrees/…`), not just ones you've already opened, kept out of the default
+  list.
 - **Quick actions** — reveal in Finder, copy path, open in a terminal, pick a
   different IDE, or run your own open command (VS Code, Cursor, …), all from
   modifier keys.
@@ -128,7 +128,7 @@ sets `release`).
 | `jb <query>`                                                                                                                                            | All recent projects, each opening in its last-used IDE                                                                                      |
 | `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                                                                                          |
 | `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                                                                                            |
-| `<keyword>~`                                                                                                                                            | The same search, **plus every git [worktree](#git-worktrees-the--variant)** of your projects — discovered on disk, not just opened ones (`jb~`, `goland~`, …) |
+| `<keyword>~`                                                                                                                                            | A dedicated list of **just your git [worktrees](#git-worktrees-the--variant)** — discovered on disk, not only opened ones (`jb~`, `goland~`, …) |
 | `<keyword>+`                                                                                                                                            | The same search, **plus un-opened projects** found in your configured [project roots](#un-opened-projects-the--variant) (`jb+`, `idea+`, …) |
 
 Alfred fuzzy-matches your query against the project name and its path
@@ -169,13 +169,17 @@ whatever pin/forget state you'd attached to it.
 
 Linked git **worktrees** are hidden from the default list — they'd otherwise
 flood your recents with one entry per branch. The `~` variant (`jb~`, `idea~`, …)
-brings them back, and it discovers them **on disk**, not just the ones you've
-opened: for every project it knows (your recents and `+` project roots) it asks
-git for that repo's worktrees and lists them all, including never-opened ones.
+is a **dedicated worktree list**: it shows *only* worktrees (no regular projects),
+and it discovers them **on disk**, not just the ones you've opened — for every
+project it knows (your recents and `+` project roots) it asks git for that repo's
+worktrees and lists them all, including never-opened ones.
 
-Worktree results are marked with a **`⑂`** glyph in their title (after the `★`
-pin marker if pinned), since a worktree is otherwise icon-identical to a normal
-repo. You can also type `worktree` in the query to filter to them.
+The three keywords give you three distinct lists: `jb` is your recents, `jb+` is
+your projects (recents + un-opened, no worktrees), and `jb~` is your worktrees.
+Worktree rows are still marked with a **`⑂`** glyph in their title (after the `★`
+pin marker if pinned) so they're recognisable when `JB_EXCLUDE_WORKTREES` is off
+and recent worktrees mix into the plain `jb` list; you can also type `worktree`
+in the query to filter to them.
 
 This matters because worktrees rarely sit where a folder scan would find them —
 they commonly live in a dot-dir *inside* the repo (e.g.

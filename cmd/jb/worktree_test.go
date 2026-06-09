@@ -4,10 +4,68 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/davidseptimus/alfred-jetbrains-launcher/internal/config"
 	"github.com/davidseptimus/alfred-jetbrains-launcher/internal/recent"
 )
+
+// TestEmitSearchWorktreeOnly verifies the `~` variant is a worktree-only list:
+// a normal recent project is dropped, while a discovered worktree of it shows.
+func TestEmitSearchWorktreeOnly(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "roots")
+	repo := filepath.Join(root, "demo-repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "README"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-qm", "init")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "wt-branch", filepath.Join(repo, ".worktrees", "wt-branch"))
+
+	cfg := config.Config{
+		Home:         tmp,
+		CacheDir:     filepath.Join(tmp, "cache"),
+		DataDir:      filepath.Join(tmp, "data"),
+		ProjectRoots: []string{root},
+	}
+	for _, d := range []string{cfg.CacheDir, cfg.DataDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Assert on the title field, not raw substrings: the worktree's own path
+	// contains "demo-repo", so a naive Contains would collide.
+	const repoTitle = `"title":"demo-repo"`
+	const wtTitle = `"title":"⑂ wt-branch"`
+
+	// `+` lists the un-opened repo (a non-worktree) but not the worktree.
+	roots := captureStdout(t, func() { emitSearch(cfg, "", "", false, true, "jb+") })
+	if !strings.Contains(roots, repoTitle) {
+		t.Errorf("`+` should list the un-opened repo, got:\n%s", roots)
+	}
+	if strings.Contains(roots, wtTitle) {
+		t.Errorf("`+` must not list worktrees, got:\n%s", roots)
+	}
+
+	// `~` lists the worktree (⑂-marked) but drops the non-worktree repo.
+	wt := captureStdout(t, func() { emitSearch(cfg, "", "", true, false, "jb~") })
+	if !strings.Contains(wt, wtTitle) {
+		t.Errorf("`~` should list the discovered worktree, got:\n%s", wt)
+	}
+	if strings.Contains(wt, repoTitle) {
+		t.Errorf("`~` must drop non-worktree projects, got:\n%s", wt)
+	}
+}
 
 // gitIn runs a git command in dir, failing the test on error.
 func gitIn(t *testing.T, dir string, args ...string) {

@@ -330,6 +330,12 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 		if matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
 			continue // user-configured project-level ignore
 		}
+		if worktreesFlag && !p.IsWorktree {
+			// The `~` variant is a dedicated worktree list: recents + discovered,
+			// filtered to worktrees. Non-worktrees (including pinned ones) belong to
+			// the plain `jb` / `+` lists, not here.
+			continue
+		}
 		if p.IsWorktree {
 			// Worktrees split by origin. The default `jb` list mirrors IDE recents,
 			// so JB_EXCLUDE_WORKTREES (and its per-search override) governs only
@@ -446,7 +452,7 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 
 	items := append(pinned, rest...)
 	if len(items) == 0 {
-		items = append(items, emptyStateItem(product, keywordInstalled))
+		items = append(items, emptyStateItem(product, keywordInstalled, worktreesFlag))
 	}
 	if banner, ok := updateBanner(cfg, product); ok {
 		items = append([]alfred.Item{banner}, items...)
@@ -1074,9 +1080,13 @@ func familyMatches(p recent.Project, family string) bool {
 
 // emptyStateItem tailors the no-results row, distinguishing "you have no such
 // projects" from "that IDE isn't even installed".
-func emptyStateItem(product string, keywordInstalled bool) alfred.Item {
+func emptyStateItem(product string, keywordInstalled, worktrees bool) alfred.Item {
 	var item alfred.Item
 	switch {
+	case worktrees && product == "":
+		item = alfred.Info("No git worktrees found", "Worktrees of your projects show up here")
+	case worktrees:
+		item = alfred.Info("No "+ide.FamilyDisplay(product)+" worktrees found", "")
 	case product == "":
 		item = alfred.Info("No recent JetBrains projects found", "Open a project in an IDE, then try again")
 	case !keywordInstalled:
