@@ -6,6 +6,7 @@ package discover
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -173,6 +174,51 @@ func FindProjectDirs(roots []string) []string {
 		}
 	}
 	return dirs
+}
+
+// WorktreesOf returns the working-tree paths of every *linked* git worktree of
+// the repository at repoDir, excluding repoDir's own (main) worktree. It returns
+// nil when repoDir is not a repo, has no linked worktrees, or git can't be run.
+// A repo only gains linked worktrees once it has a ".git/worktrees" registry dir
+// (created by `git worktree add`), so the common no-worktree case is rejected by
+// a single stat without spawning git. Enumerating via git is necessary because a
+// linked worktree's working dir lives wherever its gitdir pointer says — commonly
+// a dot-dir like ".worktrees/<branch>" inside the repo — which neither the
+// one-level root scan (FindProjectDirs) nor a shallow walk would ever reach.
+// These are candidate worktrees surfaced by the `~` keyword variant; existence,
+// stub, and dedup filtering happen downstream.
+func WorktreesOf(repoDir string) []string {
+	if info, err := os.Stat(filepath.Join(repoDir, ".git", "worktrees")); err != nil || !info.IsDir() {
+		return nil // no linked worktrees registered — skip the git call
+	}
+	out, err := exec.Command("git", "-C", repoDir, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return nil
+	}
+	// git reports paths with symlinks resolved (e.g. /var -> /private/var on
+	// macOS), so resolve repoDir the same way before comparing to exclude the main
+	// worktree reliably.
+	main := resolvePath(repoDir)
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		p, ok := strings.CutPrefix(line, "worktree ")
+		if !ok {
+			continue // porcelain has HEAD/branch/bare lines too — only "worktree <path>" matters
+		}
+		if p = strings.TrimSpace(p); p != "" && resolvePath(p) != main {
+			paths = append(paths, filepath.Clean(p)) // skip the main worktree; keep the linked ones
+		}
+	}
+	return paths
+}
+
+// resolvePath returns the symlink-resolved, cleaned form of p, falling back to a
+// plain Clean when the path can't be resolved (e.g. it no longer exists).
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
 }
 
 func splitProductVersion(name string) (product, version string) {

@@ -35,6 +35,10 @@ reopen.
 - **Un-opened projects too** — the `+` variant (`jb+`, `idea+`) surfaces
   freshly-cloned projects you've never opened, auto-detecting your
   `~/<IDE>Projects` folders (override via config) and kept out of the default list.
+- **Every worktree on demand** — the `~` variant (`jb~`, `idea~`) surfaces every
+  linked **git worktree** of your projects, found on disk via git (wherever they
+  live — e.g. `.worktrees/…`), not just ones you've already opened, and kept out
+  of the default list.
 - **Quick actions** — reveal in Finder, copy path, open in a terminal, pick a
   different IDE, or run your own open command (VS Code, Cursor, …), all from
   modifier keys.
@@ -124,7 +128,7 @@ sets `release`).
 | `jb <query>`                                                                                                                                            | All recent projects, each opening in its last-used IDE                                                                                      |
 | `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                                                                                          |
 | `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                                                                                            |
-| `<keyword>~`                                                                                                                                            | The same search, **including git worktrees** (`jb~`, `goland~`, …)                                                                          |
+| `<keyword>~`                                                                                                                                            | The same search, **plus every git [worktree](#git-worktrees-the--variant)** of your projects — discovered on disk, not just opened ones (`jb~`, `goland~`, …) |
 | `<keyword>+`                                                                                                                                            | The same search, **plus un-opened projects** found in your configured [project roots](#un-opened-projects-the--variant) (`jb+`, `idea+`, …) |
 
 Alfred fuzzy-matches your query against the project name and its path
@@ -160,6 +164,34 @@ durable and path-keyed, so if you later actually open the project it **stays
 hidden** from your recents until you restore it with `jb forget --clear`. Once an
 un-opened project is opened in an IDE it simply becomes a normal recent, carrying
 whatever pin/forget state you'd attached to it.
+
+#### Git worktrees (the `~` variant)
+
+Linked git **worktrees** are hidden from the default list — they'd otherwise
+flood your recents with one entry per branch. The `~` variant (`jb~`, `idea~`, …)
+brings them back, and it discovers them **on disk**, not just the ones you've
+opened: for every project it knows (your recents and `+` project roots) it asks
+git for that repo's worktrees and lists them all, including never-opened ones.
+
+Worktree results are marked with a **`⑂`** glyph in their title (after the `★`
+pin marker if pinned), since a worktree is otherwise icon-identical to a normal
+repo. You can also type `worktree` in the query to filter to them.
+
+This matters because worktrees rarely sit where a folder scan would find them —
+they commonly live in a dot-dir *inside* the repo (e.g.
+`myrepo/.worktrees/<branch>`), which the `+` scan deliberately skips. Reading
+them straight from git finds every worktree wherever it actually lives. It's
+cheap: a repo only has worktrees once git records them, so repos without any are
+skipped without running git at all.
+
+A discovered worktree **opens in the same IDE as its parent repo**, and an
+already-opened worktree keeps its own real IDE association and recency.
+
+Disk discovery is exclusive to `~` — just as un-opened projects are exclusive to
+`+`. The default `jb` list mirrors your IDE recents, so unticking **Exclude git
+worktrees** in the workflow config (`JB_EXCLUDE_WORKTREES`) only stops *recent*
+(already-opened) worktrees from being filtered out of every search; worktrees
+that exist only on disk still appear solely under `~`.
 
 ### Modifier keys (on a highlighted result)
 
@@ -266,7 +298,7 @@ Open **Configure Workflow…** in Alfred:
 
 | Setting               | Variable               | Default                          | Effect                                                                                                                                                                                                                                                                           |
 |-----------------------|------------------------|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Exclude git worktrees | `JB_EXCLUDE_WORKTREES` | on                               | Hide linked git worktrees (use `<keyword>~` to include per-search)                                                                                                                                                                                                               |
+| Exclude git worktrees | `JB_EXCLUDE_WORKTREES` | on                               | Hide linked git worktrees that are in your recents; untick to keep those in every search. On-disk worktrees (incl. never-opened ones) appear only under the [`<keyword>~` variant](#git-worktrees-the--variant)                                                                    |
 | Terminal app          | `JB_TERMINAL`          | Terminal                         | App for the ⇧ open-in-terminal action (iTerm, Warp, Ghostty, …)                                                                                                                                                                                                                  |
 | Custom open command   | `JB_OPEN_CMD`          | _(none)_                         | Command for the ⌃⇧ action; `{path}` → project path (quoted for you). Runs in your login shell. See [Custom open command](#custom-open-command)                                                                                                                                   |
 | Task terminal         | `JB_TASK_TERMINAL`     | Terminal                         | Terminal the `runtask` keyword launches into (Terminal, iTerm, Ghostty)                                                                                                                                                                                                          |

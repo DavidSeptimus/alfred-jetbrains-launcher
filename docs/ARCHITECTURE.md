@@ -28,7 +28,11 @@ flowchart LR
     B -->|no| C[("Reuse cached list")]:::cache
     B -->|yes| D["Merge into one list:
                   dedupe by path, keep
-                  the most-recently-used"]
+                  the most-recently-used,
+                  then fold in disk-discovered
+                  un-opened projects (the +
+                  variant) and git worktrees
+                  (the ~ variant)"]
     D --> E[("Save to cache")]:::cache
     C --> F["Filter out what you should not see:
              missing folders, stubs, worktrees,
@@ -39,8 +43,11 @@ flowchart LR
     G --> H["Show results in Alfred"]
 ```
 
-Code: `internal/discover`, `internal/recent` (merge/dedupe), `internal/cache`
-(mtime fingerprint), `cmd/jb` `loadProjects` / `emitSearch`.
+Code: `internal/discover` (recent files, `+` root scan, `~` worktree
+enumeration via `WorktreesOf`), `internal/recent` (merge/dedupe,
+`AppendUnopened`), `internal/cache` (mtime fingerprint, incl. each repo's
+`.git/worktrees` registry), `cmd/jb` `buildProjects` / `loadProjects` /
+`emitSearch`.
 
 ---
 

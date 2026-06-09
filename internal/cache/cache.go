@@ -42,6 +42,19 @@ func Fingerprint(cfg config.Config, files []discover.RecentFile, ships []discove
 			parts = append(parts, fmt.Sprintf("projroot:%s=%d", dir, info.ModTime().UnixNano()))
 		}
 	}
+	// The `~` variant discovers linked git worktrees, which register under
+	// <repo>/.git/worktrees; that dir's mtime changes when a worktree is added or
+	// removed (the working dir often lives in a dot-dir, so the root's own mtime
+	// doesn't move). Fold in the registry mtime of every project-root subdir so
+	// creating a worktree of a project under a root invalidates the cache.
+	// Worktrees of repos outside the roots refresh on the next ordinary
+	// invalidation (any IDE open) or an explicit `jb refresh`.
+	for _, dir := range discover.FindProjectDirs(projectRoots) {
+		reg := filepath.Join(dir, ".git", "worktrees")
+		if info, err := os.Stat(reg); err == nil {
+			parts = append(parts, fmt.Sprintf("wtreg:%s=%d", reg, info.ModTime().UnixNano()))
+		}
+	}
 	for _, f := range files {
 		parts = append(parts, fmt.Sprintf("file:%s=%d", f.Path, f.ModTime.UnixNano()))
 	}

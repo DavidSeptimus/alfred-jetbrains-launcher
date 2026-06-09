@@ -2,6 +2,7 @@ package discover
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -85,6 +86,58 @@ func TestFindProjectDirs(t *testing.T) {
 	}
 	if len(got) != 2 || !got["alpha"] || !got["beta"] {
 		t.Fatalf("want exactly alpha+beta (dotdir, file, missing root excluded), got %v", got)
+	}
+}
+
+// git runs a git command in dir, failing the test on error.
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestWorktreesOf(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "README"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-qm", "init")
+
+	// No worktrees yet -> nil (and no git call, since .git/worktrees is absent).
+	if got := WorktreesOf(repo); got != nil {
+		t.Fatalf("a repo with no linked worktrees should return nil, got %v", got)
+	}
+
+	// Add a linked worktree inside a dot-dir, mirroring the common ".worktrees"
+	// layout the one-level root scan can't reach.
+	wt := filepath.Join(repo, ".worktrees", "feature")
+	git(t, repo, "worktree", "add", "-q", "-b", "feature", wt)
+
+	got := WorktreesOf(repo)
+	if len(got) != 1 {
+		t.Fatalf("want exactly the one linked worktree (main excluded), got %v", got)
+	}
+	// macOS temp dirs are under /var -> /private/var symlink; compare resolved paths.
+	wantResolved, _ := filepath.EvalSymlinks(wt)
+	gotResolved, _ := filepath.EvalSymlinks(got[0])
+	if gotResolved != wantResolved {
+		t.Errorf("worktree path = %q, want %q", got[0], wt)
+	}
+
+	// A plain directory that isn't a git repo -> nil.
+	if got := WorktreesOf(t.TempDir()); got != nil {
+		t.Errorf("a non-repo dir should return nil, got %v", got)
 	}
 }
 

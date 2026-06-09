@@ -90,13 +90,7 @@ func loadProjects(cfg config.Config) []recent.Project {
 	fp := cache.Fingerprint(cfg, files, ships, rootPaths(roots))
 	projects, ok := cache.Load(cfg, fp)
 	if !ok {
-		projects = recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
-		// Fold each project root's immediate subdirs in as un-opened projects, tagged
-		// with the IDE the root implies. They are cached alongside recents (one shared
-		// cache for both `jb` and `jb+`); emitSearch hides them unless `+` is used.
-		if scan := scanUnopened(roots); len(scan) > 0 {
-			projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
-		}
+		projects = buildProjects(cfg, files, ships, roots)
 		cache.Save(cfg, fp, projects)
 	}
 	// Re-stamp each project with the IDE it was last launched with via the
@@ -231,6 +225,46 @@ func scanUnopened(roots []projectRoot) []recent.ScanDir {
 	return out
 }
 
+// buildProjects assembles the full merged project list from disk: recents (every
+// IDE/version, plus Fleet/Air), the `+` variant's un-opened root-scan dirs, and
+// the `~` variant's linked git worktrees. The three sources share one cache; the
+// `Unopened`/`IsWorktree` flags let emitSearch reveal each only under its variant.
+func buildProjects(cfg config.Config, files []discover.RecentFile, ships []discover.ShipFile, roots []projectRoot) []recent.Project {
+	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
+	// Fold each project root's immediate subdirs in as un-opened projects, tagged
+	// with the IDE the root implies (one shared cache for both `jb` and `jb+`).
+	if scan := scanUnopened(roots); len(scan) > 0 {
+		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
+	}
+	// Discover the linked git worktrees of every known main repo (recents +
+	// un-opened scans) and fold them in too. They are AppendUnopened entries whose
+	// dirs ProjectFromPath detects as worktrees, so they carry IsWorktree and stay
+	// hidden until `jb~`.
+	if wt := scanWorktrees(projects); len(wt) > 0 {
+		projects = recent.AppendUnopened(projects, wt, cfg.IgnoreContent)
+	}
+	return projects
+}
+
+// scanWorktrees enumerates the linked git worktrees of every main repo in
+// projects (recents + un-opened root scans), tagging each worktree with its
+// parent repo's IDE code so it opens in the same IDE. Worktrees usually live in a
+// dot-dir inside the repo, so they are found via git, not the one-level root
+// scan. An opened worktree already present in recents is left as-is by
+// AppendUnopened's dedup, keeping its real association and activation time.
+func scanWorktrees(projects []recent.Project) []recent.ScanDir {
+	var out []recent.ScanDir
+	for _, p := range projects {
+		if !p.Exists || p.IsWorktree {
+			continue // only existing main repos are worktree-bearing candidates
+		}
+		for _, wt := range discover.WorktreesOf(p.Path) {
+			out = append(out, recent.ScanDir{Path: wt, Code: p.ProductionCode})
+		}
+	}
+	return out
+}
+
 // parseAll parses every recentProjects.xml plus every Fleet/Air ship store into
 // one slice of raw entries for merging.
 func parseAll(cfg config.Config, files []discover.RecentFile, ships []discover.ShipFile) []recent.RawEntry {
@@ -296,13 +330,25 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 		if matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
 			continue // user-configured project-level ignore
 		}
-		if p.IsWorktree && !showWorktrees {
-			continue // hide linked git worktrees by default
-		}
-		if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
-			// Un-opened root-scan entries only show under the `+` variant — unless
-			// pinned: a pin means "keep this handy", so (like a durable pin that has
-			// aged out of recents) it surfaces in the normal list too, ★-pinned.
+		if p.IsWorktree {
+			// Worktrees split by origin. The default `jb` list mirrors IDE recents,
+			// so JB_EXCLUDE_WORKTREES (and its per-search override) governs only
+			// worktrees that are themselves recents — opened ones. Worktrees
+			// discovered on disk (Unopened) appear ONLY under the explicit `~`
+			// variant, never via the toggle, mirroring how un-opened projects appear
+			// only under `+`. A pin promotes either into the normal list, ★-pinned,
+			// like any other pinned entry.
+			show := showWorktrees
+			if p.Unopened {
+				show = worktreesFlag
+			}
+			if !show && !st.IsPinned(p.Path) {
+				continue
+			}
+		} else if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
+			// Un-opened root-scan projects show only under the `+` variant — unless
+			// pinned, which (like a durable pin that has aged out of recents)
+			// surfaces them in the normal list too, ★-pinned.
 			continue
 		}
 		if product != "" && !familyMatches(p, product) {
@@ -346,10 +392,18 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 			subtitle += "  ·  ⎇ " + branch
 		}
 
+		// A worktree is otherwise indistinguishable from a normal repo (same icon,
+		// and the ⎇ branch shows for any checkout), so mark it with a leading glyph,
+		// ordered after the ★ pin marker so a pinned worktree reads "★ ⑂ name".
 		pinnedNow := st.IsPinned(p.Path)
-		title, pinLabel := p.DisplayName, "Pin to top"
+		pinLabel := "Pin to top"
+		name := p.DisplayName
+		if p.IsWorktree {
+			name = worktreeGlyph + " " + name
+		}
+		title := name
 		if pinnedNow {
-			title, pinLabel = "★ "+p.DisplayName, "Unpin"
+			title, pinLabel = "★ "+name, "Unpin"
 		}
 
 		// No uid: Alfred uses an item's uid to re-rank results by learned action
@@ -474,6 +528,11 @@ func cmdIDEs(args []string) {
 // by the "pick a different IDE" flow to convey the exact chosen IDE.
 const specSep = "\x1f"
 
+// worktreeGlyph prefixes a linked-git-worktree result's title so it's
+// distinguishable from a normal repo at a glance (the IDE icon and ⎇ branch
+// alone don't reveal it). Mirrors the ★ pin-marker convention.
+const worktreeGlyph = "⑂"
+
 func cmdOpen(args []string) {
 	fs := flag.NewFlagSet("open", flag.ExitOnError)
 	path := fs.String("path", "", "project path")
@@ -571,10 +630,7 @@ func cmdRefresh() {
 	files := discover.Find(cfg)
 	ships := discover.FindShips(cfg)
 	roots := effectiveProjectRoots(cfg)
-	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
-	if scan := scanUnopened(roots); len(scan) > 0 {
-		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
-	}
+	projects := buildProjects(cfg, files, ships, roots)
 	cache.Save(cfg, cache.Fingerprint(cfg, files, ships, rootPaths(roots)), projects)
 	fmt.Printf("cached %d projects from %d files\n", len(projects), len(files)+len(ships))
 }
@@ -748,10 +804,7 @@ func cmdDoctor() {
 	files := discover.Find(cfg)
 	ships := discover.FindShips(cfg)
 	roots := effectiveProjectRoots(cfg)
-	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
-	if scan := scanUnopened(roots); len(scan) > 0 {
-		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
-	}
+	projects := buildProjects(cfg, files, ships, roots)
 	installed := ide.Detect(cfg)
 	st := state.Load(cfg.DataDir)
 
@@ -1040,6 +1093,9 @@ func matchString(p recent.Project, family, ideLabel string) string {
 	parts := []string{p.DisplayName, family, ideLabel}
 	// Include path components so users can match on parent folders too.
 	parts = append(parts, strings.FieldsFunc(p.Path, func(r rune) bool { return r == filepath.Separator })...)
+	if p.IsWorktree {
+		parts = append(parts, "worktree") // so a query like "worktree" filters to them
+	}
 	return strings.Join(parts, " ")
 }
 
