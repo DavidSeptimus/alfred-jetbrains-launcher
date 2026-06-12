@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/davidseptimus/alfred-jetbrains-launcher/internal/config"
 	taskrunner "github.com/davidseptimus/alfred-taskrunner"
@@ -50,6 +53,151 @@ func TestReplaceRunner(t *testing.T) {
 	names := out[0].Name + "," + out[1].Name
 	if names != "dev,runIde" {
 		t.Errorf("expected dev,runIde, got %s", names)
+	}
+}
+
+func TestGradleRefreshItem(t *testing.T) {
+	gradleDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(gradleDir, "build.gradle.kts"), []byte("plugins {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("gradle project shows refresh row carrying its path", func(t *testing.T) {
+		item, ok := gradleRefreshItem(config.Config{}, gradleDir)
+		if !ok {
+			t.Fatal("expected a refresh row for a Gradle project")
+		}
+		if item.Arg != "refresh"+specSep+gradleDir {
+			t.Errorf("arg = %q, want refresh<US>%s", item.Arg, gradleDir)
+		}
+		if item.Valid == nil || !*item.Valid {
+			t.Error("refresh row should be valid")
+		}
+	})
+
+	t.Run("non-gradle project has no refresh row", func(t *testing.T) {
+		if _, ok := gradleRefreshItem(config.Config{}, t.TempDir()); ok {
+			t.Error("expected no refresh row for a non-Gradle project")
+		}
+	})
+
+	t.Run("disabling gradle hides the refresh row", func(t *testing.T) {
+		if _, ok := gradleRefreshItem(config.Config{TaskDisable: []string{"gradle"}}, gradleDir); ok {
+			t.Error("expected no refresh row when Gradle is disabled")
+		}
+	})
+}
+
+func TestGradleEnumInFlight(t *testing.T) {
+	cfg := config.Config{CacheDir: t.TempDir()}
+	const project = "/some/gradle/project"
+	marker := gradleCachePath(cfg, project) + ".spawning"
+
+	t.Run("no marker is not in flight", func(t *testing.T) {
+		if gradleEnumInFlight(cfg, project) {
+			t.Error("expected not-in-flight with no marker")
+		}
+	})
+
+	t.Run("fresh marker is in flight", func(t *testing.T) {
+		if err := os.WriteFile(marker, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !gradleEnumInFlight(cfg, project) {
+			t.Error("expected in-flight with a fresh marker")
+		}
+	})
+
+	t.Run("stale marker is not in flight", func(t *testing.T) {
+		old := time.Now().Add(-2 * gradleEnumLease)
+		if err := os.Chtimes(marker, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if gradleEnumInFlight(cfg, project) {
+			t.Error("a marker past the lease should read as not-in-flight (crashed leftover)")
+		}
+	})
+}
+
+func TestGradleEnumErroredAndCooldown(t *testing.T) {
+	cfg := config.Config{CacheDir: t.TempDir()}
+	const project = "/some/gradle/project"
+	errMarker := gradleErrorMarker(cfg, project)
+	spawnMarker := gradleSpawnMarker(cfg, project)
+
+	t.Run("no error marker is not errored", func(t *testing.T) {
+		if gradleEnumErrored(cfg, project) {
+			t.Error("expected not-errored with no marker")
+		}
+	})
+
+	t.Run("fresh error marker reads as errored", func(t *testing.T) {
+		if err := os.WriteFile(errMarker, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !gradleEnumErrored(cfg, project) {
+			t.Error("expected errored with a fresh error marker")
+		}
+	})
+
+	t.Run("fresh error marker suppresses a re-spawn", func(t *testing.T) {
+		// Error marker is present (prior subtest). spawnGradleEnumeration must back
+		// off at the cooldown check and never create the spawn marker — so this also
+		// never reaches cmd.Start() (no stray process in the test).
+		_ = os.Remove(spawnMarker)
+		spawnGradleEnumeration(cfg, project)
+		if _, err := os.Stat(spawnMarker); !os.IsNotExist(err) {
+			t.Error("spawn should be suppressed while the error cooldown is fresh")
+		}
+	})
+
+	t.Run("stale error marker reads as cleared", func(t *testing.T) {
+		old := time.Now().Add(-2 * gradleEnumLease)
+		if err := os.Chtimes(errMarker, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if gradleEnumErrored(cfg, project) {
+			t.Error("an error marker past the lease should read as cleared")
+		}
+	})
+}
+
+func TestRecordGradleEnumError(t *testing.T) {
+	cfg := config.Config{CacheDir: t.TempDir()}
+	const project = "/some/gradle/project"
+	spawn := gradleSpawnMarker(cfg, project)
+	errMark := gradleErrorMarker(cfg, project)
+
+	if err := os.WriteFile(spawn, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recordGradleEnumError(cfg, project)
+
+	if _, err := os.Stat(errMark); err != nil {
+		t.Errorf("expected an error marker to be written: %v", err)
+	}
+	if _, err := os.Stat(spawn); !os.IsNotExist(err) {
+		t.Error("the spawn marker should be cleared once the error marker is in place")
+	}
+}
+
+func TestRefreshGradleTaskCacheNonGradleClearsSpinner(t *testing.T) {
+	cfg := config.Config{CacheDir: t.TempDir()}
+	// A non-Gradle dir: GradleFingerprint == "" so the worker does no enumeration,
+	// but it must still clear any in-flight marker so the spinner can't wedge.
+	project := t.TempDir()
+	spawn := gradleSpawnMarker(cfg, project)
+	if err := os.WriteFile(spawn, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	refreshGradleTaskCache(cfg, project)
+
+	if _, err := os.Stat(spawn); !os.IsNotExist(err) {
+		t.Error("a non-Gradle refresh should clear the spawn marker")
+	}
+	if _, err := os.Stat(gradleErrorMarker(cfg, project)); !os.IsNotExist(err) {
+		t.Error("a non-Gradle refresh should not write an error marker (no cooldown needed)")
 	}
 }
 

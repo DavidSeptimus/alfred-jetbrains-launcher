@@ -1173,8 +1173,13 @@ func applescriptQuote(s string) string {
 	return `"` + s + `"`
 }
 
-func emit(items []alfred.Item) {
-	out, err := alfred.Render(items)
+func emit(items []alfred.Item) { emitWithRerun(items, 0) }
+
+// emitWithRerun is emit with an Alfred `rerun` interval (seconds) so Alfred
+// re-runs the Script Filter automatically — used to poll a background job and
+// update the list in place. A zero interval omits the field.
+func emitWithRerun(items []alfred.Item, rerun float64) {
+	out, err := alfred.RenderWithRerun(items, rerun)
 	if err != nil {
 		fail(fmt.Sprintf("render: %v", err))
 	}

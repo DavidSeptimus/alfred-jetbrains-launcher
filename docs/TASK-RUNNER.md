@@ -145,6 +145,22 @@ pipelines. So Gradle **enumerates**:
   cold drill-in show the fixed verbs + sniffed run task instantly, spawn
   `./gradlew tasks` in the background to fill the cache; next drill-in shows the
   full list. If enumeration fails (offline, broken build) degrade to fixed verbs.
+- **Live refresh + progress (implemented).** A background enumeration is tracked
+  by a `.spawning` sidecar marker next to the cache. While it's present the task
+  list shows a *Refreshing Gradle tasks…* row and emits Alfred's top-level
+  `rerun` (0.7s), so the keyword re-polls itself and swaps in the fresh list the
+  moment the cache lands — no retype. The manual **↻ Refresh tasks** row (a
+  `refresh<US>path` spec) doesn't block: it kicks the background enumeration and
+  reopens straight into that polling state, so Alfred never hangs on the slow
+  `./gradlew tasks`.
+- **Failure handling.** On a failed/empty enumeration the worker drops the
+  `.spawning` marker and writes a `.error` sidecar. The task list then shows a
+  *Gradle task refresh failed — showing default tasks* row (over the fixed verbs)
+  and stops polling. The `.error` marker also **cools down** auto-respawns, so a
+  broken build can't tight-loop `gradlew` on every keystroke; a manual ↻ refresh
+  clears it to force an immediate retry. Both markers share one freshness lease
+  (`gradleEnumLease`, ~90s) sized to cover a slow cold enumeration, so a crashed
+  worker's leftover marker can't wedge the spinner or the cooldown forever.
 - **Sniff is a highlighter, not the list:** `org.jetbrains.intellij[.platform]` →
   pin `runIde`; Spring → pin `bootRun`. The real task still appears via enumeration.
 
@@ -195,8 +211,9 @@ State + navigation:
   next level.
 - **One launch action** handles every row: `./jb runtask --spec "$1"` dispatches on
   the leading *kind* token — `picktask` (set target + reopen), `back` (clear +
-  reopen), or a launch kind. So `Enter` and the launch modifiers all route to the
-  one action; no Conditional. Project rows disable the launch modifiers.
+  reopen), `refresh` (kick a background Gradle re-enumeration + reopen into the
+  polling state), or a launch kind. So `Enter` and the launch modifiers all route
+  to the one action; no Conditional. Project rows disable the launch modifiers.
 - **`jb` fast lane:** ⌥⇧ on a `jb` project row carries a `picktask<US><path>` arg to
   the same launch action — recording that project and jumping straight into its
   tasks. `Enter` on a `jb` row still opens the IDE; the fast lane is additive.

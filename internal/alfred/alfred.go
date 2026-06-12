@@ -40,15 +40,25 @@ type Item struct {
 // Output is the top-level Script Filter document.
 type Output struct {
 	Items []Item `json:"items"`
+	// Rerun asks Alfred to re-run the Script Filter automatically after this many
+	// seconds (valid range 0.1–5.0). Used to poll a background job (e.g. a Gradle
+	// enumeration) and refresh the list in place. Omitted when zero.
+	Rerun float64 `json:"rerun,omitempty"`
 }
 
 // Render marshals items into the Script Filter JSON Alfred expects. An empty
 // list still produces a valid `{"items":[]}` document.
 func Render(items []Item) ([]byte, error) {
+	return RenderWithRerun(items, 0)
+}
+
+// RenderWithRerun is Render with an Alfred `rerun` interval, so the Script Filter
+// re-runs itself after rerun seconds (0 omits the field — no auto-rerun).
+func RenderWithRerun(items []Item, rerun float64) ([]byte, error) {
 	if items == nil {
 		items = []Item{}
 	}
-	return json.Marshal(Output{Items: items})
+	return json.Marshal(Output{Items: items, Rerun: rerun})
 }
 
 // Info builds a single non-actionable informational row (e.g. empty state or a

@@ -254,7 +254,7 @@ It detects tasks from whatever the project uses, with no setup:
 | npm / pnpm / yarn / bun | `package.json`                               | picks the package manager from your lockfile                                                                                                                    |
 | Make                    | `Makefile`                                   |                                                                                                                                                                 |
 | just · Taskfile · Rake  | `justfile` · `Taskfile.yml` · `Rakefile`     | needs the tool installed                                                                                                                                        |
-| **Gradle**              | `build.gradle[.kts]`                         | runs `./gradlew tasks` to list the project's **real** tasks (including custom ones like `runIde`, `buildPlugin`) — cached, so it's instant after the first time |
+| **Gradle**              | `build.gradle[.kts]`                         | runs `./gradlew tasks` to list the project's **real** tasks (including custom ones like `runIde`, `buildPlugin`) — cached, so it's instant after the first time (use **↻ Refresh tasks** to rescan) |
 | Maven                   | `pom.xml`                                    | common lifecycle goals                                                                                                                                          |
 | Cargo · Go · .NET       | `Cargo.toml` · `go.mod` · `*.csproj`/`*.sln` | common commands (`build`/`test`/`run`/…)                                                                                                                        |
 | Composer · Deno         | `composer.json` · `deno.json[c]`             | scripts / tasks                                                                                                                                                 |
@@ -262,6 +262,16 @@ It detects tasks from whatever the project uses, with no setup:
 A task whose tool isn't on your `PATH` still shows, but greyed (you can still
 copy its command). Tasks run in your **login shell**, so anything on your `PATH`
 resolves.
+
+**Refreshing Gradle tasks.** Gradle is the one runner whose list is cached (every
+other runner is re-read from disk each keystroke). When the cache might be stale —
+after you add or rename a task — pick the **↻ Refresh tasks** row to rescan. It
+re-enumerates in the background while a live *Refreshing Gradle tasks…* row shows,
+and the list updates itself the moment the rescan lands (no need to retype). If
+the rescan fails (e.g. a broken build), it falls back to the default Gradle verbs
+and shows a brief error row instead of hanging. The cache also auto-refreshes when
+the build files change or after 24h, so manual refresh is only for the in-between
+cases.
 
 ### Launching a task
 
