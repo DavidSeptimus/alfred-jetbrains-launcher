@@ -210,8 +210,8 @@ three views the launcher does — they share one predicate (`projectInVariant`) 
 the two keywords can never disagree on which projects a variant surfaces:
 
 - **`runtask`** — IDE recents only (the plain list).
-- **`runtask+`** (`--roots`) — recents **+** un-opened projects discovered by
-  scanning your roots (mirrors `jb+`).
+- **`runtask+`** (`--roots`) — recents **+** projects discovered by scanning
+  your project roots (mirrors `jb+`).
 - **`runtask~`** (`--worktrees`) — the git-**worktree**-only list (mirrors `jb~`),
   ⑂-marked.
 

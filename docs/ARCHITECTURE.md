@@ -30,8 +30,8 @@ flowchart LR
                   dedupe by path, keep
                   the most-recently-used,
                   then fold in disk-discovered
-                  un-opened projects (the +
-                  variant) and git worktrees
+                  project-root entries (the
+                  + variant) and git worktrees
                   (the ~ variant)"]
     D --> E[("Save to cache")]:::cache
     C --> F["Filter out what you should not see:
