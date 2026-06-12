@@ -160,7 +160,11 @@ pipelines. So Gradle **enumerates**:
   broken build can't tight-loop `gradlew` on every keystroke; a manual ↻ refresh
   clears it to force an immediate retry. Both markers share one freshness lease
   (`gradleEnumLease`, ~90s) sized to cover a slow cold enumeration, so a crashed
-  worker's leftover marker can't wedge the spinner or the cooldown forever.
+  worker's leftover marker can't wedge the spinner or the cooldown forever. The
+  `.spawning` marker also records the worker **PID**: before respawning past the
+  lease, a still-alive PID is treated as in-flight (not swept), so an enumeration
+  slower than the lease isn't duplicated — only a genuinely dead worker's marker
+  is reclaimed.
 - **Sniff is a highlighter, not the list:** `org.jetbrains.intellij[.platform]` →
   pin `runIde`; Spring → pin `bootRun`. The real task still appears via enumeration.
 

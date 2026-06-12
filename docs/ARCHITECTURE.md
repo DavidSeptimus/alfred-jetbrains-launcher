@@ -15,6 +15,9 @@ GitHub directly from the ```mermaid blocks below.
 Every `jb search` builds (or reuses) the merged project list. The cache key is an
 mtime fingerprint, so a newly-created IDE version dir invalidates it — that's what
 prevents the "only the newest version is read" bug this workflow exists to fix.
+The same merged list and `projectInVariant` visibility gate back `jb api projects`
+(the frontend-neutral JSON the Raycast extension consumes), so both frontends show
+the same projects.
 
 ```mermaid
 flowchart LR
@@ -36,18 +39,22 @@ flowchart LR
     D --> E[("Save to cache")]:::cache
     C --> F["Filter out what you should not see:
              missing folders, stubs, worktrees,
-             forgotten, ignore-listed"]
+             forgotten, ignore-listed, and leftover
+             non-git dirs outside a project root
+             (removed-worktree husks)"]
     E --> F
     F --> G["Pin favourites on top,
              then apply the sort order"]
-    G --> H["Show results in Alfred"]
+    G --> H["Show results (Alfred Script Filter,
+             or api JSON for Raycast)"]
 ```
 
 Code: `internal/discover` (recent files, `+` root scan, `~` worktree
 enumeration via `WorktreesOf`), `internal/recent` (merge/dedupe,
-`AppendUnopened`), `internal/cache` (mtime fingerprint, incl. each repo's
-`.git/worktrees` registry), `cmd/jb` `buildProjects` / `loadProjects` /
-`emitSearch`.
+`AppendUnopened`, `IsGitCheckout` for the leftover-dir filter), `internal/cache`
+(mtime fingerprint, incl. each repo's `.git/worktrees` registry), `cmd/jb`
+`buildProjects` / `loadProjects` / `projectInVariant` (the shared visibility
+gate) / `emitSearch` (Alfred) / `apiProjects` (Raycast JSON).
 
 ---
 

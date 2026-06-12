@@ -16,6 +16,11 @@ launch. The workflow hides those by default (worktrees are one keystroke away
 when you *do* want them), so the list stays to the projects you'd actually
 reopen.
 
+There's also a **Raycast** edition: a sibling extension in
+[`raycast/jetbrains-project-launcher/`](raycast/jetbrains-project-launcher/) that
+drives the same `jb` binary, so both launchers share project discovery, filtering,
+and task-running. The rest of this README documents the Alfred workflow.
+
 > Not affiliated with, sponsored by, or endorsed by JetBrains. See
 > [Trademarks](#trademarks--attribution).
 
@@ -385,6 +390,11 @@ Studio, plus **Fleet** and **Air** (whose recent *workspaces* are read from thei
 - Projects whose directory no longer exists on disk.
 - Stub directories with no visible files (only hidden entries like `.idea` or
   `.git` remain — e.g. a removed worktree), and empty directories.
+- Leftover directories that aren't a project anymore — anything with **no git
+  checkout of its own that also isn't a direct child of one of your project
+  roots** (e.g. a **removed worktree's husk** left behind with only build output
+  and `.idea`). Real repos and live worktrees keep their `.git`, so they're never
+  caught; a non-git folder you keep directly under a project root is still shown.
 - Linked git worktrees, unless you use a `~` keyword or untick the setting.
 - Remote-dev / devcontainer entries (detected and skipped).
 
@@ -420,6 +430,17 @@ The binary speaks Alfred Script Filter JSON on stdout:
 ./build/jb-bundle/jb doctor          # diagnostics: detected IDEs, roots, why things are hidden
 ```
 
+The same binary also exposes a **frontend-neutral JSON** interface — `jb api
+projects|ides|tasks|rerun` — which is what the Raycast extension consumes (it
+shares the discovery, filtering, and task-running core; only the output shape
+differs from the Alfred Script Filter JSON above):
+
+```sh
+./build/jb-bundle/jb api projects --variant recent | jq '.items | length'
+./build/jb-bundle/jb api projects --variant worktrees | jq '.items[].title'
+./build/jb-bundle/jb api tasks --path ~/myproject | jq '.items[].title'
+```
+
 ---
 
 ## Development
@@ -429,16 +450,17 @@ update check, and the first-run quarantine self-heal — are diagrammed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
-cmd/jb            workflow backend: search / ides / open / action / tasks / runtask / refresh
+cmd/jb            shared backend: search / ides / open / action / tasks / runtask / refresh (Alfred), plus api (frontend-neutral JSON for Raycast)
 cmd/genplist      generates info.plist + per-object canvas icons from workflow/ides.json
 internal/discover find every recent file across all version dirs
 internal/recent   parse + merge/dedupe (worktree, .idea-only, existence checks)
 internal/ide      product catalogue, installed-IDE detection, resolution, running check
 internal/launch   open / reveal / copy / terminal / custom open command
 internal/tasklaunch  run a task in a terminal tab/window, background, or copy
-internal/alfred   Script Filter JSON
+internal/alfred   Script Filter JSON (and shared helpers like AbbreviateHome/Icon)
 internal/cache    mtime-keyed cache of the merged list
 taskrunner/       standalone, Alfred-agnostic module: detect build-system tasks (own go.mod)
+raycast/jetbrains-project-launcher  Raycast extension (TypeScript) over the same jb binary (own go.mod; build via scripts/prepare-backend.mjs)
 workflow/ides.json  the IDE/keyword table that drives the generated plist
 assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow icon
 scripts/gen-task-icons.sh  (re)generate the task-runner icons from JetBrains' icon set
