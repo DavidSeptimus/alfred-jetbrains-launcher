@@ -2,3 +2,6 @@ assets/bin/
 assets/icons/
 dist/
 node_modules/
+# Temp dir prepare-backend.mjs uses for the per-arch builds (normally removed,
+# but can linger if a build is interrupted).
+.backend-tmp/

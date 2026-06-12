@@ -6,3 +6,13 @@
 /.playwright-mcp/
 # Transient release-notes file produced by the release workflow (git-cliff).
 /RELEASE_NOTES.md
+
+# Ad-hoc `go build ./cmd/...` binaries dropped at the repo root (the Makefile
+# builds into build/ instead, so these only ever appear from manual builds).
+/jb
+/genplist
+# Go test and coverage artifacts.
+*.test
+coverage.out
+# Packaged workflow bundle (the Makefile writes these into dist/).
+*.alfredworkflow
