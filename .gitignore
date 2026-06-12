@@ -1,5 +1,6 @@
 /build/
 /dist/
+/.worktrees/
 .idea/
 .DS_Store
 /.playwright-mcp/
