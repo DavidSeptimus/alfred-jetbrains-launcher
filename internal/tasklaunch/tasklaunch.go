@@ -19,6 +19,12 @@ import (
 // execCommand is a seam so tests can capture argv without executing.
 var execCommand = exec.Command
 
+const (
+	macosOpen      = "/usr/bin/open"
+	macosOsascript = "/usr/bin/osascript"
+	macosPbcopy    = "/usr/bin/pbcopy"
+)
+
 // Kind is how a task is launched.
 type Kind int
 
@@ -113,7 +119,7 @@ func (s Spec) runGhostty() error {
 	if s.Kind == KindWindow {
 		shell := loginShell()
 		line := s.shellLine() + "; exec " + shell + " -il"
-		return execCommand("open", "-na", "Ghostty", "--args", "-e", shell, "-ilc", line).Run()
+		return execCommand(macosOpen, "-na", "Ghostty", "--args", "-e", shell, "-ilc", line).Run()
 	}
 	// New tab: open one with ⌘T (new tab inherits the cwd), then type the command
 	// into its interactive shell, which stays open afterwards to show output.
@@ -146,7 +152,7 @@ func (s Spec) runTemplate() error {
 // user-controlled text), so it is quoting-safe.
 func (s Spec) runBackground() error {
 	line := s.shellLine() +
-		`; code=$?; osascript -e "display notification \"Finished (exit $code)\" with title \"jb task\"" >/dev/null 2>&1`
+		`; code=$?; ` + macosOsascript + ` -e "display notification \"Finished (exit $code)\" with title \"jb task\"" >/dev/null 2>&1`
 	cmd := execCommand(loginShell(), "-lc", line)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // detach so it outlives the Script Filter
 	return cmd.Start()
@@ -200,11 +206,11 @@ func itermScript(line string, kind Kind) []string {
 }
 
 func runOSA(args []string) error {
-	return execCommand("osascript", args...).Run()
+	return execCommand(macosOsascript, args...).Run()
 }
 
 func copyToClipboard(s string) error {
-	cmd := execCommand("pbcopy")
+	cmd := execCommand(macosPbcopy)
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return err
