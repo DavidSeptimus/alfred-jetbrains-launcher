@@ -1,0 +1,230 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "jetbrains-project-launcher",
+  "title": "JetBrains Project Launcher",
+  "description": "Search and open recent JetBrains projects across IDEs and versions.",
+  "icon": "icon.png",
+  "author": "davidseptimus",
+  "license": "MIT",
+  "platforms": [
+    "macOS"
+  ],
+  "categories": [
+    "Developer Tools",
+    "Productivity"
+  ],
+  "commands": [
+    {
+      "name": "search-projects",
+      "title": "Search Projects",
+      "description": "Search recent, project-root, and worktree JetBrains projects",
+      "mode": "view"
+    },
+    {
+      "name": "rerun-last-task",
+      "title": "Rerun Last Task",
+      "description": "Re-run the most recently run build-system task",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "excludeWorktrees",
+      "title": "Exclude Git Worktrees",
+      "description": "Hide linked git worktrees from the Recent source. Worktrees still appear under the Worktrees source.",
+      "type": "checkbox",
+      "label": "Hide worktrees from recent projects",
+      "default": true,
+      "required": false
+    },
+    {
+      "name": "terminal",
+      "title": "Terminal App",
+      "description": "Terminal for the Open in Terminal action.",
+      "type": "dropdown",
+      "default": "Terminal",
+      "data": [
+        {
+          "title": "Terminal",
+          "value": "Terminal"
+        },
+        {
+          "title": "iTerm",
+          "value": "iTerm"
+        },
+        {
+          "title": "Warp",
+          "value": "Warp"
+        },
+        {
+          "title": "Ghostty",
+          "value": "Ghostty"
+        },
+        {
+          "title": "WezTerm",
+          "value": "WezTerm"
+        },
+        {
+          "title": "kitty",
+          "value": "kitty"
+        },
+        {
+          "title": "Alacritty",
+          "value": "Alacritty"
+        },
+        {
+          "title": "Hyper",
+          "value": "Hyper"
+        }
+      ],
+      "required": false
+    },
+    {
+      "name": "customOpenCommand",
+      "title": "Custom Open Command",
+      "description": "Command for the custom open action, for example: code {path}",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "taskTerminal",
+      "title": "Task Terminal",
+      "description": "Terminal the task runner launches into.",
+      "type": "dropdown",
+      "default": "Terminal",
+      "data": [
+        {
+          "title": "Terminal",
+          "value": "Terminal"
+        },
+        {
+          "title": "iTerm",
+          "value": "iTerm"
+        },
+        {
+          "title": "Ghostty",
+          "value": "Ghostty"
+        }
+      ],
+      "required": false
+    },
+    {
+      "name": "taskWindow",
+      "title": "Task Window",
+      "description": "Run tasks in a new terminal window by default.",
+      "type": "checkbox",
+      "label": "Open tasks in a new window",
+      "default": false,
+      "required": false
+    },
+    {
+      "name": "customTaskTerminalCommand",
+      "title": "Custom Task Terminal Command",
+      "description": "Template that launches tasks in any terminal. Supports {cmd}, {cwd}, and {name}.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "disabledTaskRunners",
+      "title": "Disable Task Runners",
+      "description": "Comma-separated task runners to skip, such as gradle,npm,make.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "sortOrder",
+      "title": "Sort Order",
+      "description": "Project result order before filtering.",
+      "type": "dropdown",
+      "default": "recency",
+      "data": [
+        {
+          "title": "Most Recently Used",
+          "value": "recency"
+        },
+        {
+          "title": "Least Recently Used",
+          "value": "recency-asc"
+        },
+        {
+          "title": "Name A-Z",
+          "value": "name"
+        },
+        {
+          "title": "Name Z-A",
+          "value": "name-desc"
+        },
+        {
+          "title": "Path A-Z",
+          "value": "path"
+        }
+      ],
+      "required": false
+    },
+    {
+      "name": "ignoreContent",
+      "title": "Ignore Content",
+      "description": "Comma-separated entry-name globs treated as non-content.",
+      "type": "textfield",
+      "default": "build,dist,node_modules",
+      "required": false
+    },
+    {
+      "name": "ignoreProjects",
+      "title": "Ignore Projects",
+      "description": "Comma-separated globs matched against project names and paths.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "configRoots",
+      "title": "Config Roots",
+      "description": "Colon-separated dirs holding JetBrains and Google IDE config dirs.",
+      "type": "textfield",
+      "default": "~/Library/Application Support/JetBrains:~/Library/Application Support/Google",
+      "required": false
+    },
+    {
+      "name": "appRoots",
+      "title": "Application Folders",
+      "description": "Colon-separated folders scanned for JetBrains .app bundles.",
+      "type": "textfield",
+      "default": "/Applications:~/Applications",
+      "required": false
+    },
+    {
+      "name": "projectRoots",
+      "title": "Project Roots",
+      "description": "Colon-separated dirs whose immediate subfolders are offered by the Projects source. Empty auto-detects conventional JetBrains folders.",
+      "type": "textfield",
+      "required": false
+    },
+    {
+      "name": "toolboxDirs",
+      "title": "Toolbox Script Dirs",
+      "description": "Colon-separated dirs holding JetBrains Toolbox launcher scripts.",
+      "type": "textfield",
+      "default": "~/Library/Application Support/JetBrains/Toolbox/scripts",
+      "required": false
+    }
+  ],
+  "scripts": {
+    "prepare-backend": "node scripts/prepare-backend.mjs",
+    "predev": "npm run prepare-backend",
+    "prebuild": "npm run prepare-backend",
+    "dev": "ray develop",
+    "smoke": "npm run prepare-backend && ray develop",
+    "build": "ray build -e dist",
+    "lint": "ray lint",
+    "fix-lint": "ray lint --fix"
+  },
+  "dependencies": {
+    "@raycast/api": "^1.100.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.0.4",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.39.1",
+    "typescript": "^5.5.0"
+  }
+}
