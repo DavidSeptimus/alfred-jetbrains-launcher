@@ -86,7 +86,7 @@ func main() {
 	// One launch action handles every row — its leading "kind" token selects pick
 	// / back / launch — so ↩ and the launch modifiers all route to it.
 	runtaskSfUID := uid("sf:runtask")
-	runtaskPlusUID := uid("sf:runtask+") // `runtask+` variant: widened project picker (un-opened root-scan projects)
+	runtaskPlusUID := uid("sf:runtask+") // `runtask+` variant: widened project-roots picker
 	runtaskWtUID := uid("sf:runtask~")   // `runtask~` variant: worktree-only project picker
 	runtaskUID := uid("action:runtask")
 	runtaskKwVar := "JB_KW_RUNTASK"
@@ -137,11 +137,11 @@ func main() {
 		runtaskFilter(runtaskSfUID, "{var:"+runtaskKwVar+"}", "",
 			"Run a Task", "Pick a project, then a task to run"),
 		// `runtask+` / `runtask~` — same two-level keyword, but their project picker
-		// mirrors `jb+` / `jb~` (un-opened root-scan projects / git worktrees). They
+		// mirrors `jb+` / `jb~` (project-root entries / git worktrees). They
 		// always open the picker (never a saved project's task list), since invoking
 		// them is an explicit "find me a project" gesture.
 		runtaskFilter(runtaskPlusUID, "{var:"+runtaskKwVar+"}+", " --roots",
-			"Run a Task (+ unopened)", "Pick from your project roots, then a task to run"),
+			"Run a Task (+ projects)", "Pick from your project roots, then a task to run"),
 		runtaskFilter(runtaskWtUID, "{var:"+runtaskKwVar+"}~", " --worktrees",
 			"Run a Task (+ worktrees)", "Pick a git worktree, then a task to run"),
 		scriptAction(runtaskUID, `./jb runtask --spec "$1"`),
@@ -297,13 +297,13 @@ func main() {
 		}
 		connections[sfUID] = keyMods(enterUID)
 
-		// `<keyword>+` — same search, but also including un-opened projects found
-		// by scanning the project roots: JB_PROJECT_ROOTS when set, otherwise the
+		// `<keyword>+` — same search, but also including projects found by scanning
+		// the project roots: JB_PROJECT_ROOTS when set, otherwise the
 		// auto-detected conventional ~/<IDE>Projects / ~/<IDE>Workspaces folders.
 		plusUID := uid("sf:" + k.Keyword + "+")
 		objects = append(objects, scriptFilter(plusUID, kwRef+"+",
-			base+` --roots --keyword "`+kwEnv+`+" --query "$1"`, k.Title+" (+ unopened)",
-			k.Subtext+", including un-opened projects from your roots", true))
+			base+` --roots --keyword "`+kwEnv+`+" --query "$1"`, k.Title+" (+ projects)",
+			k.Subtext+", including projects from your roots", true))
 		objIcons = append(objIcons, iconRef{plusUID, k.Product})
 		addUI(plusUID, 170, y)
 		connections[plusUID] = keyMods(enterUID)
@@ -714,7 +714,7 @@ Search and open your recent JetBrains projects across **all** installed IDEs and
 - ` + "`jb`" + ` — search every recent project; each opens in the IDE it was last used in.
 - per-IDE keywords (` + "`idea`, `pycharm`, `goland`, …" + `) — limit to one IDE.
 - append ` + "`~`" + ` to any keyword (` + "`jb~`, `goland~`" + `) to include git worktrees.
-- append ` + "`+`" + ` to any keyword (` + "`jb+`, `idea+`" + `) to also include un-opened projects from your configured project roots.
+- append ` + "`+`" + ` to any keyword (` + "`jb+`, `idea+`" + `) to also include projects from your configured project roots.
 
 Modifiers on a result: ⌘ reveal · ⌥ open in a different IDE · ⌃ copy path · ⇧ open in terminal · ⌃⇧ custom open command (e.g. VS Code) · ⌘⇧ pin/unpin · ⌘⌥ forget · ⌥⇧ run a build-system task in this project.
 

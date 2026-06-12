@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -50,7 +51,7 @@ func cmdTasks(args []string) {
 	enumerateGradle := fs.Bool("enumerate-gradle", false, "background: enumerate Gradle tasks and cache them")
 	query := fs.String("query", "", "filter text typed after the keyword")
 	worktrees := fs.Bool("worktrees", false, "runtask project picker: the `~` variant (worktrees only)")
-	roots := fs.Bool("roots", false, "runtask project picker: the `+` variant (include un-opened root-scan projects)")
+	roots := fs.Bool("roots", false, "runtask project picker: the `+` Projects variant")
 	_ = fs.Parse(args)
 	cfg := config.Load()
 
@@ -121,19 +122,20 @@ func emitRuntask(cfg config.Config, query string, worktreesFlag, scanRoots bool)
 
 // emitProjectMode lists the projects to choose from, filtered by query. The
 // candidate set mirrors the `jb` keyword's exactly — same projectInVariant
-// gating — so the plain picker shows recents, `+` adds un-opened root-scan
-// projects, and `~` is the worktree-only list. Selecting one records it (with
+// gating — so the plain picker shows recents, `+` adds project-root entries,
+// and `~` is the worktree-only list. Selecting one records it (with
 // the active variant) and re-opens runtask on its tasks.
 func emitProjectMode(cfg config.Config, query string, worktreesFlag, scanRoots bool) {
 	st := state.Load(cfg.DataDir)
 	projects := withDurablePins(cfg, loadProjects(cfg), st)
 	sortProjects(projects, cfg.Sort)
 	installed := ide.Detect(cfg)
+	roots := projectRootSet(cfg)
 	variant := variantSuffix(worktreesFlag, scanRoots)
 
 	var pinned, rest []alfred.Item
 	for _, p := range projects {
-		if !projectInVariant(p, st, cfg, worktreesFlag, scanRoots) {
+		if !projectInVariant(p, st, cfg, roots, worktreesFlag, scanRoots) {
 			continue
 		}
 		item := projectPickItem(cfg, p, installed, st.IsPinned(p.Path), variant)
@@ -161,7 +163,7 @@ func projectPickerEmptyHint(worktreesFlag, scanRoots bool) string {
 	case worktreesFlag:
 		return "No git worktrees of your projects were found"
 	case scanRoots:
-		return "No un-opened projects found in your roots"
+		return "No projects found in your roots"
 	default:
 		return "Open a project in an IDE, then try again"
 	}
@@ -397,17 +399,26 @@ func detectProjectTasks(cfg config.Config, path string) []taskrunner.Task {
 // in the default view (a tab, or a window when JB_TASK_WINDOW is set), ⌘ in the
 // other view, ⌥ in the background, ⌃ copies, ⇧ runs in the default view then
 // resets to the project picker.
-func taskItem(cfg config.Config, t taskrunner.Task) alfred.Item {
-	cmdline := shellJoinArgv(t.Command)
+// taskSubtitle builds the row subtitle shared by the Alfred task list and the
+// JSON API: the runner, then the task's description (or its command line), then
+// a "not found" note when the tool is missing. Shared so the two frontends can't
+// drift; the len guard keeps a non-runnable task with an empty argv from panicking.
+func taskSubtitle(t taskrunner.Task, cmdline string) string {
 	subtitle := string(t.Runner)
 	if t.Desc != "" {
 		subtitle += "  ·  " + t.Desc
 	} else {
 		subtitle += "  ·  " + cmdline
 	}
-	if !t.Runnable {
+	if !t.Runnable && len(t.Command) > 0 {
 		subtitle += "   —   " + t.Command[0] + " not found"
 	}
+	return subtitle
+}
+
+func taskItem(cfg config.Config, t taskrunner.Task) alfred.Item {
+	cmdline := shellJoinArgv(t.Command)
+	subtitle := taskSubtitle(t, cmdline)
 
 	spec := func(kind string) string {
 		return kind + specSep + t.Cwd + specSep + cmdline
@@ -611,7 +622,7 @@ func reopenRuntask(variant string) {
 		kw = "runtask"
 	}
 	script := `tell application id "com.runningwithcrayons.Alfred" to search ` + applescriptQuote(kw+variant+" ")
-	_ = exec.Command("osascript", "-e", script).Run()
+	_ = exec.Command("/usr/bin/osascript", "-e", script).Run()
 }
 
 func dirExists(p string) bool {
@@ -714,13 +725,18 @@ func spawnGradleEnumeration(cfg config.Config, projectPath string) {
 		return
 	}
 	marker := gradleSpawnMarker(cfg, projectPath)
-	// A fresh marker means an enumeration is already in flight; a stale one (a
-	// crashed prior spawn) is swept so it can't block forever.
+	// A fresh marker means an enumeration is already in flight. A stale one is
+	// swept only when its recorded process is actually gone — a Gradle enumeration
+	// that runs past the lease (cold daemon, huge project) is still in flight, so
+	// we must not spawn a duplicate just because the marker aged out.
 	if info, err := os.Stat(marker); err == nil {
 		if time.Since(info.ModTime()) < gradleEnumLease {
 			return
 		}
-		_ = os.Remove(marker)
+		if pid := readMarkerPID(marker); pid > 0 && processAlive(pid) {
+			return // time-stale, but the enumeration is still running
+		}
+		_ = os.Remove(marker) // crashed leftover (or no live process) — sweep it
 	}
 	_ = os.MkdirAll(cfg.CacheDir, 0o755)
 	// Create the marker atomically so two concurrent Script Filter invocations
@@ -729,19 +745,44 @@ func spawnGradleEnumeration(cfg config.Config, projectPath string) {
 	if err != nil {
 		return // lost the race (or unwritable) — another invocation is spawning
 	}
-	_ = f.Close()
 
 	exe, err := os.Executable()
 	if err != nil {
+		_ = f.Close()
 		_ = os.Remove(marker) // nothing will run; don't leave a phantom in-flight marker
 		return
 	}
 	cmd := exec.Command(exe, "tasks", "--path", projectPath, "--enumerate-gradle")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		_ = os.Remove(marker) // failed to spawn; clear the marker so the spinner/rerun won't wedge
 		return
 	}
+	// Record the PID so a later stale-marker check can tell "still running" from
+	// "crashed", then close. mtime updates here — harmless for the time-based
+	// freshness check that drives the spinner.
+	_, _ = fmt.Fprintf(f, "%d", cmd.Process.Pid)
+	_ = f.Close()
+}
+
+// readMarkerPID returns the PID recorded in a spawn marker, or 0 if the marker
+// is empty/unreadable (older markers predate PID recording).
+func readMarkerPID(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return pid
+}
+
+// processAlive reports whether pid names a live process. Signal 0 probes for
+// existence without delivering a signal; EPERM means it exists but is owned by
+// another user (still alive).
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
 
 // --- helpers ---
