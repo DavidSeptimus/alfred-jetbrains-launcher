@@ -242,7 +242,12 @@ Beyond opening a project, the workflow can **run its build-system tasks** in a
 terminal. Two ways in:
 
 - **`runtask`** — a standalone keyword: pick a project, then pick a task. Both
-  steps filter as you type.
+  steps filter as you type. Its project picker mirrors `jb` (your IDE recents),
+  and it takes the same `+`/`~` modifiers: **`runtask+`** also lists un-opened
+  projects from your roots, and **`runtask~`** is a git-worktree picker — each
+  exactly the project set the matching `jb`/`jb+`/`jb~` keyword shows. (The
+  modifiers always open the picker, even if you'd already scoped `runtask` to a
+  project — they're how you say "let me pick a different one".)
 - **⌥⇧ on any `jb` result** — jumps straight into that project's tasks.
 
 ![Typing runtask to pick a project, then choosing a detected build task to run it in a terminal](docs/img/runtask.gif)
@@ -288,8 +293,10 @@ Modifiers on a task:
 
 `runtask` **stays scoped to the last project** you ran something in — reopen it
 and you're back on that project's tasks (handy for iterating). Pick **⬅ Switch
-project** (or use ⇧ above) to go back to the picker. The **`rerun`** keyword
-re-runs your most recent task directly.
+project** (or use ⇧ above) to go back to the picker — and if you'd reached the
+project through `runtask+`/`runtask~`, *Switch project* returns you to that same
+widened picker, not just your recents. The **`rerun`** keyword re-runs your most
+recent task directly.
 
 The launch terminal is configurable: **Terminal.app**, **iTerm2**, and
 **Ghostty** are built in, or set a `JB_TASK_TERMINAL_CMD` template for any other

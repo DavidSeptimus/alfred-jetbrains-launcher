@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/davidseptimus/alfred-jetbrains-launcher/internal/config"
+	"github.com/davidseptimus/alfred-jetbrains-launcher/internal/recent"
 	taskrunner "github.com/davidseptimus/alfred-taskrunner"
 )
 
@@ -221,6 +222,84 @@ func TestTaskItemLaunchMatrix(t *testing.T) {
 	}
 	if !strings.HasPrefix(item.Mods["ctrl"].Arg, "copy"+us) {
 		t.Errorf("ctrl(copy) arg = %q", item.Mods["ctrl"].Arg)
+	}
+}
+
+// TestRuntaskStateVariantRoundTrip covers the persisted-variant state: a pick
+// records both the project and the picker variant it came from; "back"
+// (clearRuntaskTarget) drops the project but keeps the variant so it can reopen
+// the same widened picker; and a plain-variant clear removes the file entirely.
+func TestRuntaskStateVariantRoundTrip(t *testing.T) {
+	cfg := config.Config{DataDir: t.TempDir()}
+
+	setRuntaskTarget(cfg, "/p/proj", "~")
+	if s := loadRuntaskState(cfg); s.Path != "/p/proj" || s.Variant != "~" {
+		t.Fatalf("after pick, state = %+v, want {/p/proj ~}", s)
+	}
+
+	clearRuntaskTarget(cfg) // "back": keep the variant, drop the project
+	if s := loadRuntaskState(cfg); s.Path != "" || s.Variant != "~" {
+		t.Fatalf("after back, state = %+v, want {\"\" ~}", s)
+	}
+	if loadRuntaskTarget(cfg) != "" {
+		t.Error("target should be empty after back")
+	}
+
+	// A plain-variant scope has nothing to preserve, so clearing removes the file.
+	setRuntaskTarget(cfg, "/p/proj", "")
+	clearRuntaskTarget(cfg)
+	if _, err := os.Stat(runtaskStatePath(cfg)); !os.IsNotExist(err) {
+		t.Error("clearing a plain-variant scope should remove the state file")
+	}
+}
+
+// TestProjectPickItemCarriesVariant verifies a picker row encodes the active
+// variant in its picktask spec (so "back" returns to the same picker) and marks
+// worktrees with the same glyph the jb keyword uses.
+func TestProjectPickItemCarriesVariant(t *testing.T) {
+	cfg := config.Config{}
+
+	wt := projectPickItem(cfg, recent.Project{Path: "/p/wt", DisplayName: "wt", IsWorktree: true}, nil, false, "~")
+	if wt.Arg != "picktask"+specSep+"/p/wt"+specSep+"~" {
+		t.Errorf("worktree pick arg = %q, want picktask<US>/p/wt<US>~", wt.Arg)
+	}
+	if wt.Title != worktreeGlyph+" wt" {
+		t.Errorf("worktree row should be glyph-marked, got %q", wt.Title)
+	}
+
+	// Plain variant → empty trailing field; a pinned row gets the ★ marker.
+	plain := projectPickItem(cfg, recent.Project{Path: "/p/a", DisplayName: "a"}, nil, true, "")
+	if plain.Arg != "picktask"+specSep+"/p/a"+specSep {
+		t.Errorf("plain pick arg = %q, want picktask<US>/p/a<US>", plain.Arg)
+	}
+	if plain.Title != "★ a" {
+		t.Errorf("pinned title = %q, want ★ a", plain.Title)
+	}
+}
+
+// TestEmitRuntaskVariantForcesPicker locks in the core reworked semantics: with
+// a project saved, plain `runtask` resumes its task list, but `runtask~`/`+`
+// always open the (widened) picker — without discarding the saved project.
+func TestEmitRuntaskVariantForcesPicker(t *testing.T) {
+	target := t.TempDir() // a real dir so plain runtask enters task mode
+	cfg := config.Config{Home: t.TempDir(), DataDir: t.TempDir(), CacheDir: t.TempDir()}
+	setRuntaskTarget(cfg, target, "")
+
+	plain := captureStdout(t, func() { emitRuntask(cfg, "", false, false) })
+	if !strings.Contains(plain, "Switch project") {
+		t.Errorf("plain runtask with a saved target should show the task list (back row), got:\n%s", plain)
+	}
+
+	wt := captureStdout(t, func() { emitRuntask(cfg, "", true, false) })
+	if strings.Contains(wt, "Switch project") {
+		t.Errorf("runtask~ must force the picker, not the saved task list, got:\n%s", wt)
+	}
+	if !strings.Contains(wt, "No git worktrees") {
+		t.Errorf("runtask~ picker should show the worktree empty hint, got:\n%s", wt)
+	}
+
+	if loadRuntaskTarget(cfg) != target {
+		t.Error("opening a variant picker must not drop the saved project")
 	}
 }
 

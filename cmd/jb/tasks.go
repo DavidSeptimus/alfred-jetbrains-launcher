@@ -49,6 +49,8 @@ func cmdTasks(args []string) {
 	path := fs.String("path", "", "project path (for --enumerate-gradle, or a direct task list)")
 	enumerateGradle := fs.Bool("enumerate-gradle", false, "background: enumerate Gradle tasks and cache them")
 	query := fs.String("query", "", "filter text typed after the keyword")
+	worktrees := fs.Bool("worktrees", false, "runtask project picker: the `~` variant (worktrees only)")
+	roots := fs.Bool("roots", false, "runtask project picker: the `+` variant (include un-opened root-scan projects)")
 	_ = fs.Parse(args)
 	cfg := config.Load()
 
@@ -61,7 +63,7 @@ func cmdTasks(args []string) {
 	case *rerun:
 		emitRerun(cfg)
 	case *runtask:
-		emitRuntask(cfg, *query)
+		emitRuntask(cfg, *query, *worktrees, *roots)
 	case *path != "":
 		emitTaskList(cfg, *path) // direct task list for a known project (CLI / debug)
 	default:
@@ -99,38 +101,42 @@ func emitRerun(cfg config.Config) {
 	}})
 }
 
-// emitRuntask renders the active level of the runtask keyword: the task list for
-// the project recorded in state (if any still exists), otherwise the project
-// picker. query filters the rows.
-func emitRuntask(cfg config.Config, query string) {
-	if target := loadRuntaskTarget(cfg); target != "" && dirExists(target) {
-		emitTaskMode(cfg, target, query)
-		return
+// emitRuntask renders the active level of the runtask keyword. The plain keyword
+// is two-level: the task list for the project recorded in state (if any still
+// exists), otherwise the project picker. The `+`/`~` variants (worktreesFlag /
+// scanRoots) instead *always* show the (widened) picker — invoking them is an
+// explicit "I'm looking for a project" gesture, so they bypass the saved target
+// rather than dropping the user back into its task list. They don't clear the
+// target either: dismissing a variant picker leaves the prior selection intact.
+// query filters the rows.
+func emitRuntask(cfg config.Config, query string, worktreesFlag, scanRoots bool) {
+	if !worktreesFlag && !scanRoots {
+		if target := loadRuntaskTarget(cfg); target != "" && dirExists(target) {
+			emitTaskMode(cfg, target, query)
+			return
+		}
 	}
-	emitProjectMode(cfg, query)
+	emitProjectMode(cfg, query, worktreesFlag, scanRoots)
 }
 
-// emitProjectMode lists the projects to choose from (the same visible set as the
-// `jb` keyword), filtered by query. Selecting one records it and re-opens
-// runtask on its tasks.
-func emitProjectMode(cfg config.Config, query string) {
+// emitProjectMode lists the projects to choose from, filtered by query. The
+// candidate set mirrors the `jb` keyword's exactly — same projectInVariant
+// gating — so the plain picker shows recents, `+` adds un-opened root-scan
+// projects, and `~` is the worktree-only list. Selecting one records it (with
+// the active variant) and re-opens runtask on its tasks.
+func emitProjectMode(cfg config.Config, query string, worktreesFlag, scanRoots bool) {
 	st := state.Load(cfg.DataDir)
 	projects := withDurablePins(cfg, loadProjects(cfg), st)
 	sortProjects(projects, cfg.Sort)
 	installed := ide.Detect(cfg)
+	variant := variantSuffix(worktreesFlag, scanRoots)
 
 	var pinned, rest []alfred.Item
 	for _, p := range projects {
-		if st.IsHidden(p.Path) || !p.Exists || p.Stub || matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
+		if !projectInVariant(p, st, cfg, worktreesFlag, scanRoots) {
 			continue
 		}
-		if p.IsWorktree && cfg.ExcludeWorktrees {
-			continue
-		}
-		if p.Unopened && !st.IsPinned(p.Path) {
-			continue // root-scan entries only surface under the `+` variant elsewhere
-		}
-		item := projectPickItem(cfg, p, installed, st.IsPinned(p.Path))
+		item := projectPickItem(cfg, p, installed, st.IsPinned(p.Path), variant)
 		if !queryMatches(query, item.Title+" "+item.Match) {
 			continue
 		}
@@ -143,30 +149,49 @@ func emitProjectMode(cfg config.Config, query string) {
 
 	items := append(pinned, rest...)
 	if len(items) == 0 {
-		items = append(items, noMatchItem(query, "project", "Open a project in an IDE, then try again"))
+		items = append(items, noMatchItem(query, "project", projectPickerEmptyHint(worktreesFlag, scanRoots)))
 	}
 	emit(items)
 }
 
+// projectPickerEmptyHint tailors the empty-state hint to the active picker
+// variant, matching how each variant sources its projects.
+func projectPickerEmptyHint(worktreesFlag, scanRoots bool) string {
+	switch {
+	case worktreesFlag:
+		return "No git worktrees of your projects were found"
+	case scanRoots:
+		return "No un-opened projects found in your roots"
+	default:
+		return "Open a project in an IDE, then try again"
+	}
+}
+
 // projectPickItem is a project row in the picker. ↩ records it as the runtask
-// target (a "picktask" spec); the launch action handles the rest. The
-// launch-kind modifiers are disabled here — they only mean something on a task
-// row.
-func projectPickItem(cfg config.Config, p recent.Project, installed []ide.Installed, pinned bool) alfred.Item {
+// target (a "picktask" spec carrying the active variant, so "back" returns to
+// the same widened picker); the launch action handles the rest. The launch-kind
+// modifiers are disabled here — they only mean something on a task row.
+func projectPickItem(cfg config.Config, p recent.Project, installed []ide.Installed, pinned bool, variant string) alfred.Item {
 	family := ide.FamilyOf(p.ProductionCode)
 	subtitle := alfred.AbbreviateHome(cfg.Home, p.Path)
 	if branch := recent.GitBranch(p.Path); branch != "" {
 		subtitle += "  ·  ⎇ " + branch
 	}
-	title := p.DisplayName
+	// A worktree is otherwise indistinguishable from a normal repo, so mark it
+	// with the same leading glyph the `jb` keyword uses, after any ★ pin marker.
+	name := p.DisplayName
+	if p.IsWorktree {
+		name = worktreeGlyph + " " + name
+	}
+	title := name
 	if pinned {
-		title = "★ " + title
+		title = "★ " + name
 	}
 	no := alfred.BoolPtr(false)
 	return alfred.Item{
 		Title:    title,
 		Subtitle: subtitle,
-		Arg:      "picktask" + specSep + p.Path,
+		Arg:      "picktask" + specSep + p.Path + specSep + variant,
 		Match:    matchString(p, family, ""),
 		Icon:     iconForFamily(family, installed),
 		Valid:    alfred.BoolPtr(true),
@@ -422,11 +447,18 @@ func cmdRuntask(args []string) {
 	kind, rest, _ := strings.Cut(*spec, specSep)
 	switch kind {
 	case "picktask":
-		setRuntaskTarget(cfg, rest)
-		reopenRuntask()
+		// rest is path<US>variant — record both, then reopen the *plain* keyword so
+		// it lands in this project's task list (the variant keywords force the picker,
+		// so reopening one of them would bounce straight back out).
+		path, variant, _ := strings.Cut(rest, specSep)
+		setRuntaskTarget(cfg, path, variant)
+		reopenRuntask("")
 	case "back":
+		// Drop the project but keep the variant, and reopen that variant's picker so
+		// the user returns to the same (possibly widened) project list they came from.
+		variant := loadRuntaskState(cfg).Variant
 		clearRuntaskTarget(cfg)
-		reopenRuntask()
+		reopenRuntask(variant)
 	case "refresh":
 		// Kick a background re-enumeration of the project's Gradle tasks and reopen
 		// immediately — the reopened keyword shows the live "refreshing" row and
@@ -438,7 +470,7 @@ func cmdRuntask(args []string) {
 		// post-failure cooldown.
 		_ = os.Remove(gradleErrorMarker(cfg, rest))
 		spawnGradleEnumeration(cfg, rest)
-		reopenRuntask()
+		reopenRuntask("") // refresh happens in task mode; reopen the plain keyword to stay there
 	default: // a launch kind: rest is cwd<US>cmdline
 		cwd, cmdline, ok := strings.Cut(rest, specSep)
 		if !ok {
@@ -507,42 +539,70 @@ func loadLastRun(cfg config.Config) (cwd, cmdline string, ok bool) {
 
 // --- runtask target state ---
 
+// runtaskState holds what the runtask keyword is scoped to: the selected project
+// Path (empty = project picker) and the picker Variant ("" / "+" / "~") the
+// project was chosen from. The variant is persisted so "back" and the launch
+// action's reopen return to the same widened picker, not the plain recents one.
 type runtaskState struct {
-	Path string `json:"path"`
+	Path    string `json:"path"`
+	Variant string `json:"variant,omitempty"`
 }
 
 func runtaskStatePath(cfg config.Config) string {
 	return filepath.Join(cfg.DataDir, "runtask.json")
 }
 
-// loadRuntaskTarget returns the project the runtask keyword is currently scoped
-// to, or "" for the project picker.
-func loadRuntaskTarget(cfg config.Config) string {
+// loadRuntaskState returns the full runtask scope. A missing/unreadable file
+// reads as the empty state (project picker, plain variant).
+func loadRuntaskState(cfg config.Config) runtaskState {
 	data, err := os.ReadFile(runtaskStatePath(cfg))
 	if err != nil {
-		return ""
+		return runtaskState{}
 	}
 	var s runtaskState
 	if json.Unmarshal(data, &s) != nil {
-		return ""
+		return runtaskState{}
 	}
-	return s.Path
+	return s
 }
 
-func setRuntaskTarget(cfg config.Config, path string) {
+// loadRuntaskTarget returns the project the runtask keyword is currently scoped
+// to, or "" for the project picker.
+func loadRuntaskTarget(cfg config.Config) string {
+	return loadRuntaskState(cfg).Path
+}
+
+func writeRuntaskState(cfg config.Config, s runtaskState) {
 	if os.MkdirAll(cfg.DataDir, 0o755) != nil {
 		return
 	}
-	if data, err := json.Marshal(runtaskState{Path: path}); err == nil {
+	if data, err := json.Marshal(s); err == nil {
 		_ = os.WriteFile(runtaskStatePath(cfg), data, 0o644)
 	}
 }
 
-func clearRuntaskTarget(cfg config.Config) { _ = os.Remove(runtaskStatePath(cfg)) }
+// setRuntaskTarget records the chosen project and the variant it was picked
+// from. The variant rides along so a later "back" reopens the same picker.
+func setRuntaskTarget(cfg config.Config, path, variant string) {
+	writeRuntaskState(cfg, runtaskState{Path: path, Variant: variant})
+}
 
-// reopenRuntask re-opens Alfred on the runtask keyword so the keyword re-reads
-// the (just-changed) target and shows the next level. No-op outside Alfred.
-func reopenRuntask() {
+// clearRuntaskTarget drops the selected project but preserves the variant, so
+// "back" (and a reset launch) returns to the picker the project was chosen from
+// rather than the plain recents picker.
+func clearRuntaskTarget(cfg config.Config) {
+	v := loadRuntaskState(cfg).Variant
+	if v == "" {
+		_ = os.Remove(runtaskStatePath(cfg))
+		return
+	}
+	writeRuntaskState(cfg, runtaskState{Variant: v})
+}
+
+// reopenRuntask re-opens Alfred on the runtask keyword (with the given variant
+// suffix, "" / "+" / "~") so the keyword re-reads the just-changed scope and
+// shows the next level. No-op outside Alfred.
+func reopenRuntask(variant string) {
 	if os.Getenv("alfred_workflow_bundleid") == "" {
 		return
 	}
@@ -550,7 +610,7 @@ func reopenRuntask() {
 	if kw == "" {
 		kw = "runtask"
 	}
-	script := `tell application id "com.runningwithcrayons.Alfred" to search ` + applescriptQuote(kw+" ")
+	script := `tell application id "com.runningwithcrayons.Alfred" to search ` + applescriptQuote(kw+variant+" ")
 	_ = exec.Command("osascript", "-e", script).Run()
 }
 

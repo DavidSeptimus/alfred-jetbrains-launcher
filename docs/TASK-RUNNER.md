@@ -199,9 +199,40 @@ empty arg fell back to the item's path.)
 `runtask` is **two levels, both natively filterable**:
 
 1. **Project picker** — `./jb tasks --runtask` with no target lists projects (the
-   same visible set as `jb`). Each row's arg is `picktask<US><path>`.
+   same visible set as `jb`). Each row's arg is `picktask<US><path><US><variant>`.
 2. **Task list** — once a project is in state, the same keyword lists that
    project's tasks, preceded by a `back` row (arg `back`) to return to the picker.
+
+### `+` / `~` picker variants (parity with the `jb` keyword)
+
+The picker takes the same modifiers as `jb`, so the *project* step has the same
+three views the launcher does — they share one predicate (`projectInVariant`) so
+the two keywords can never disagree on which projects a variant surfaces:
+
+- **`runtask`** — IDE recents only (the plain list).
+- **`runtask+`** (`--roots`) — recents **+** un-opened projects discovered by
+  scanning your roots (mirrors `jb+`).
+- **`runtask~`** (`--worktrees`) — the git-**worktree**-only list (mirrors `jb~`),
+  ⑂-marked.
+
+Each is its own Script Filter (`{var:JB_KW_RUNTASK}` + `+`/`~`, like the `jb`
+variants), all wired to the one launch action with the same row mods. They differ
+only in the candidate set their picker emits.
+
+**Variant semantics — they always open the picker.** Plain `runtask` is
+state-respecting (a saved project ⇒ its task list). The `+`/`~` variants are an
+explicit "I'm looking for a (different) project" gesture, so they **bypass the
+saved target and always show the widened picker** — but never *clear* it, so
+dismissing a variant picker leaves your prior scope intact.
+
+**The variant is persisted** (`runtask.json` gains a `variant` field). When you
+pick a project, the launch action records both the path and the variant it came
+from, then reopens the **plain** keyword (which lands on that project's tasks —
+reopening the variant keyword would just bounce back to the forced picker).
+Later, **⬅ Switch project** (`back`) drops the path but keeps the variant and
+reopens `runtask<variant>`, returning you to the same widened picker rather than
+plain recents. The `jb`/`jb+`/`jb~` ⌥⇧ fast lane carries the matching variant in
+its `picktask` spec, so a task picked from `jb~` likewise *backs* into `runtask~`.
 
 State + navigation:
 

@@ -289,6 +289,46 @@ func cmdSearch(args []string) {
 	emitSearch(config.Load(), *product, *query, *worktrees, *roots, *keyword)
 }
 
+// projectInVariant reports whether project p belongs in the given variant's
+// view: worktreesFlag = the `~` (worktree-only) variant, scanRoots = the `+`
+// (include un-opened root-scan projects) variant, both false = the plain
+// recents list. It is the single source of truth for variant visibility, shared
+// by the `jb` keyword (emitSearch) and the `runtask` project picker
+// (emitProjectMode) so the two never drift on which projects each variant shows.
+func projectInVariant(p recent.Project, st state.State, cfg config.Config, worktreesFlag, scanRoots bool) bool {
+	if st.IsHidden(p.Path) || !p.Exists || p.Stub || matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
+		// Forgotten, vanished, stub, or user-ignored — never shown in any variant.
+		return false
+	}
+	if worktreesFlag && !p.IsWorktree {
+		// The `~` variant is a dedicated worktree list: recents + discovered,
+		// filtered to worktrees. Non-worktrees (including pinned ones) belong to the
+		// plain / `+` lists, not here.
+		return false
+	}
+	if p.IsWorktree {
+		// Worktrees split by origin. The default list mirrors IDE recents, so
+		// JB_EXCLUDE_WORKTREES (and its per-search override) governs only worktrees
+		// that are themselves recents — opened ones. Worktrees discovered on disk
+		// (Unopened) appear ONLY under the explicit `~` variant, never via the
+		// toggle, mirroring how un-opened projects appear only under `+`. A pin
+		// promotes either into the normal list, ★-pinned.
+		show := worktreesFlag || !cfg.ExcludeWorktrees
+		if p.Unopened {
+			show = worktreesFlag
+		}
+		if !show && !st.IsPinned(p.Path) {
+			return false
+		}
+	} else if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
+		// Un-opened root-scan projects show only under the `+` variant — unless
+		// pinned, which (like a durable pin that has aged out of recents) surfaces
+		// them in the normal list too, ★-pinned.
+		return false
+	}
+	return true
+}
+
 // emitSearch renders the Script Filter results for a product family. It records
 // the current keyword + query so that pin/forget can re-open Alfred in place.
 func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoots bool, keyword string) {
@@ -307,7 +347,6 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 	projects := withDurablePins(cfg, loadProjects(cfg), st)
 	sortProjects(projects, cfg.Sort)
 	installed := ide.Detect(cfg)
-	showWorktrees := worktreesFlag || !cfg.ExcludeWorktrees
 
 	// For a per-IDE keyword, note whether that IDE is actually installed.
 	keywordInstalled := true
@@ -318,44 +357,8 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 	// Pinned projects float to the top, preserving recency order within each group.
 	var pinned, rest []alfred.Item
 	for _, p := range projects {
-		if st.IsHidden(p.Path) {
-			continue // user forgot this project
-		}
-		if !p.Exists {
-			continue // hide recent entries whose directory no longer exists
-		}
-		if p.Stub {
-			continue // hide stubs with no real content (only hidden / ignored entries)
-		}
-		if matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
-			continue // user-configured project-level ignore
-		}
-		if worktreesFlag && !p.IsWorktree {
-			// The `~` variant is a dedicated worktree list: recents + discovered,
-			// filtered to worktrees. Non-worktrees (including pinned ones) belong to
-			// the plain `jb` / `+` lists, not here.
-			continue
-		}
-		if p.IsWorktree {
-			// Worktrees split by origin. The default `jb` list mirrors IDE recents,
-			// so JB_EXCLUDE_WORKTREES (and its per-search override) governs only
-			// worktrees that are themselves recents — opened ones. Worktrees
-			// discovered on disk (Unopened) appear ONLY under the explicit `~`
-			// variant, never via the toggle, mirroring how un-opened projects appear
-			// only under `+`. A pin promotes either into the normal list, ★-pinned,
-			// like any other pinned entry.
-			show := showWorktrees
-			if p.Unopened {
-				show = worktreesFlag
-			}
-			if !show && !st.IsPinned(p.Path) {
-				continue
-			}
-		} else if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
-			// Un-opened root-scan projects show only under the `+` variant — unless
-			// pinned, which (like a durable pin that has aged out of recents)
-			// surfaces them in the normal list too, ★-pinned.
-			continue
+		if !projectInVariant(p, st, cfg, worktreesFlag, scanRoots) {
+			continue // not part of this variant's view (see projectInVariant)
 		}
 		if product != "" && !familyMatches(p, product) {
 			// Un-opened projects with no implied IDE — from a custom JB_PROJECT_ROOTS,
@@ -438,7 +441,7 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 				// not ⌘⌃ — macOS reserves ⌘⌃ chords system-wide.)
 				"alt+shift": {
 					Subtitle: "Run a task in this project…",
-					Arg:      "picktask" + specSep + p.Path,
+					Arg:      "picktask" + specSep + p.Path + specSep + variantSuffix(worktreesFlag, scanRoots),
 					Valid:    alfred.BoolPtr(true),
 				},
 			},
@@ -1124,6 +1127,21 @@ func keywordFor(product string, worktrees, roots bool) string {
 		kw += "+"
 	}
 	return kw
+}
+
+// variantSuffix returns the runtask keyword suffix ("~", "+", or "") for the
+// active variant. It's carried in the picktask spec so that, after picking a
+// project, the runtask "back"/reopen plumbing returns to the same widened picker
+// the project was chosen from.
+func variantSuffix(worktrees, roots bool) string {
+	switch {
+	case worktrees:
+		return "~"
+	case roots:
+		return "+"
+	default:
+		return ""
+	}
 }
 
 type lastSearch struct {

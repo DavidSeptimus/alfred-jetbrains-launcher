@@ -86,6 +86,8 @@ func main() {
 	// One launch action handles every row — its leading "kind" token selects pick
 	// / back / launch — so ↩ and the launch modifiers all route to it.
 	runtaskSfUID := uid("sf:runtask")
+	runtaskPlusUID := uid("sf:runtask+") // `runtask+` variant: widened project picker (un-opened root-scan projects)
+	runtaskWtUID := uid("sf:runtask~")   // `runtask~` variant: worktree-only project picker
 	runtaskUID := uid("action:runtask")
 	runtaskKwVar := "JB_KW_RUNTASK"
 	// Rerun keyword: a one-row Script Filter showing the last task run, routed to
@@ -132,7 +134,16 @@ func main() {
 		// picker and the task list are type-to-filter), and the selected project is
 		// kept in state by the launch action — never in the query — so filtering is
 		// never fighting the project path.
-		runtaskFilter(runtaskSfUID, "{var:"+runtaskKwVar+"}"),
+		runtaskFilter(runtaskSfUID, "{var:"+runtaskKwVar+"}", "",
+			"Run a Task", "Pick a project, then a task to run"),
+		// `runtask+` / `runtask~` — same two-level keyword, but their project picker
+		// mirrors `jb+` / `jb~` (un-opened root-scan projects / git worktrees). They
+		// always open the picker (never a saved project's task list), since invoking
+		// them is an explicit "find me a project" gesture.
+		runtaskFilter(runtaskPlusUID, "{var:"+runtaskKwVar+"}+", " --roots",
+			"Run a Task (+ unopened)", "Pick from your project roots, then a task to run"),
+		runtaskFilter(runtaskWtUID, "{var:"+runtaskKwVar+"}~", " --worktrees",
+			"Run a Task (+ worktrees)", "Pick a git worktree, then a task to run"),
 		scriptAction(runtaskUID, `./jb runtask --spec "$1"`),
 		// Rerun keyword: shows the single most-recent task, re-runnable via the same
 		// launch action. filterResults=false (one row, nothing to filter).
@@ -140,11 +151,15 @@ func main() {
 			"Rerun Last Task", "Re-run the task you most recently ran", false),
 		notification(taskNotifyUID, "Task runner", "{query}", true),
 	)
+	addUI(runtaskPlusUID, 170, 1060)
+	addUI(runtaskWtUID, 290, 1060)
 	addUI(runtaskSfUID, 420, 1060)
 	addUI(runtaskUID, 760, 1060)
 	addUI(rerunSfUID, 420, 1200)
 	addUI(taskNotifyUID, 980, 1060)
-	objIcons = append(objIcons, iconRef{runtaskSfUID, "run"}, iconRef{runtaskUID, "run"}, iconRef{rerunSfUID, "run"})
+	objIcons = append(objIcons,
+		iconRef{runtaskSfUID, "run"}, iconRef{runtaskPlusUID, "run"}, iconRef{runtaskWtUID, "run"},
+		iconRef{runtaskUID, "run"}, iconRef{rerunSfUID, "run"})
 	addUI(customCmdUID, 760, 80)
 	addUI(revealUID, 760, 220)
 	addUI(copyUID, 760, 360)
@@ -163,13 +178,18 @@ func main() {
 	// runtask rows -> the launch action. ↩ covers pick-project / back / run-tab
 	// (the action dispatches on the row's kind token); the modifiers add the other
 	// launch kinds for task rows (project rows disable them).
-	connections[runtaskSfUID] = []any{
+	runtaskConns := []any{
 		conn(runtaskUID, modNone),
 		connSub(runtaskUID, modCmd, "Run in a new window"),
 		connSub(runtaskUID, modAlt, "Run in the background"),
 		connSub(runtaskUID, modCtrl, "Copy command"),
 		connSub(runtaskUID, modShift, "Run, then reset to the project picker"),
 	}
+	// The `+`/`~` variants share the launch action and the same row mods — they
+	// differ only in which projects their picker surfaces.
+	connections[runtaskSfUID] = runtaskConns
+	connections[runtaskPlusUID] = runtaskConns
+	connections[runtaskWtUID] = runtaskConns
 	// Rerun keyword rows route to the same launch action (↩ / launch modifiers).
 	connections[rerunSfUID] = []any{
 		conn(runtaskUID, modNone),
@@ -441,8 +461,8 @@ func scriptFilter(uid, keyword, script, title, subtext string, filterResults boo
 // backfill with file/web fallback results. (With Alfred filtering instead, a
 // query that matched no task left an empty set and Alfred padded it with random
 // files.)
-func runtaskFilter(uid, keyword string) map[string]any {
-	sf := scriptFilter(uid, keyword, `./jb tasks --runtask --query "$1"`, "Run a Task", "Pick a project, then a task to run", false)
+func runtaskFilter(uid, keyword, flags, title, subtext string) map[string]any {
+	sf := scriptFilter(uid, keyword, `./jb tasks --runtask`+flags+` --query "$1"`, title, subtext, false)
 	sf["config"].(map[string]any)["runningsubtext"] = "Loading…"
 	return sf
 }
