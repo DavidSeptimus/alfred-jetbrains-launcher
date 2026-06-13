@@ -450,8 +450,9 @@ update check, and the first-run quarantine self-heal — are diagrammed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
+Shared core (repo root) drives two frontend siblings — alfred/ and raycast/:
+
 cmd/jb            shared backend: search / ides / open / action / tasks / runtask / refresh (Alfred), plus api (frontend-neutral JSON for Raycast)
-cmd/genplist      generates info.plist + per-object canvas icons from workflow/ides.json
 internal/discover find every recent file across all version dirs
 internal/recent   parse + merge/dedupe (worktree, .idea-only, existence checks)
 internal/ide      product catalogue, installed-IDE detection, resolution, running check
@@ -460,8 +461,9 @@ internal/tasklaunch  run a task in a terminal tab/window, background, or copy
 internal/alfred   Script Filter JSON (and shared helpers like AbbreviateHome/Icon)
 internal/cache    mtime-keyed cache of the merged list
 taskrunner/       standalone, Alfred-agnostic module: detect build-system tasks (own go.mod)
+alfred/cmd/genplist      generates info.plist + per-object canvas icons from alfred/workflow/ides.json
+alfred/workflow/ides.json  the IDE/keyword table that drives the generated plist
 raycast/jetbrains-project-launcher  Raycast extension (TypeScript) over the same jb binary (own go.mod; build via scripts/prepare-backend.mjs)
-workflow/ides.json  the IDE/keyword table that drives the generated plist
 assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow icon
 scripts/gen-task-icons.sh  (re)generate the task-runner icons from JetBrains' icon set
 ```
@@ -484,7 +486,7 @@ The task runner's design and the `runtask` flow are documented in
 | `make wipe-update-cache` | delete the cached release check so `jb` re-checks now (keeps pins/forgets) |
 
 `info.plist` is **generated** (deterministic UUIDv5 UIDs) — edit
-`workflow/ides.json`, not the plist.
+`alfred/workflow/ides.json`, not the plist.
 
 ### Cutting a release
 
