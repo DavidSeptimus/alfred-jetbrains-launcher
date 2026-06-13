@@ -2,6 +2,7 @@
 //
 // Subcommands:
 //
+//	jb api    <projects|ides|tasks|rerun>              neutral JSON for non-Alfred frontends
 //	jb search [--product <family>] [--worktrees] [--roots] [--query <q>]  Script Filter JSON of recent projects
 //	jb ides   --path <p>                            Script Filter JSON of IDEs to open <p> with
 //	jb open   --path <p> [--product <family>] | --spec <code\x1fdatadir\x1fpath>
@@ -48,10 +49,12 @@ var (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jb <search|ides|open|action|tasks|runtask|pin|forget|update|refresh|doctor>")
+		fmt.Fprintln(os.Stderr, "usage: jb <api|search|ides|open|action|tasks|runtask|pin|forget|update|refresh|doctor>")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "api":
+		cmdAPI(os.Args[2:])
 	case "search":
 		cmdSearch(os.Args[2:])
 	case "ides":
@@ -213,6 +216,18 @@ func rootPaths(roots []projectRoot) []string {
 	return paths
 }
 
+// projectRootSet returns the configured/auto-detected project roots as a set of
+// absolute paths, so projectInVariant can cheaply test whether a project is an
+// immediate child of a root (computed once per emit, not per project).
+func projectRootSet(cfg config.Config) map[string]bool {
+	roots := effectiveProjectRoots(cfg)
+	set := make(map[string]bool, len(roots))
+	for _, r := range roots {
+		set[r.Path] = true
+	}
+	return set
+}
+
 // scanUnopened scans each root one level deep, tagging every subdirectory with
 // the root's implied production code.
 func scanUnopened(roots []projectRoot) []recent.ScanDir {
@@ -226,18 +241,18 @@ func scanUnopened(roots []projectRoot) []recent.ScanDir {
 }
 
 // buildProjects assembles the full merged project list from disk: recents (every
-// IDE/version, plus Fleet/Air), the `+` variant's un-opened root-scan dirs, and
+// IDE/version, plus Fleet/Air), the `+` variant's project-root dirs, and
 // the `~` variant's linked git worktrees. The three sources share one cache; the
 // `Unopened`/`IsWorktree` flags let emitSearch reveal each only under its variant.
 func buildProjects(cfg config.Config, files []discover.RecentFile, ships []discover.ShipFile, roots []projectRoot) []recent.Project {
 	projects := recent.Merge(parseAll(cfg, files, ships), cfg.IgnoreContent)
-	// Fold each project root's immediate subdirs in as un-opened projects, tagged
+	// Fold each project root's immediate subdirs in as project-root entries, tagged
 	// with the IDE the root implies (one shared cache for both `jb` and `jb+`).
 	if scan := scanUnopened(roots); len(scan) > 0 {
 		projects = recent.AppendUnopened(projects, scan, cfg.IgnoreContent)
 	}
 	// Discover the linked git worktrees of every known main repo (recents +
-	// un-opened scans) and fold them in too. They are AppendUnopened entries whose
+	// project-root scans) and fold them in too. They are AppendUnopened entries whose
 	// dirs ProjectFromPath detects as worktrees, so they carry IsWorktree and stay
 	// hidden until `jb~`.
 	if wt := scanWorktrees(projects); len(wt) > 0 {
@@ -247,7 +262,7 @@ func buildProjects(cfg config.Config, files []discover.RecentFile, ships []disco
 }
 
 // scanWorktrees enumerates the linked git worktrees of every main repo in
-// projects (recents + un-opened root scans), tagging each worktree with its
+// projects (recents + project-root scans), tagging each worktree with its
 // parent repo's IDE code so it opens in the same IDE. Worktrees usually live in a
 // dot-dir inside the repo, so they are found via git, not the one-level root
 // scan. An opened worktree already present in recents is left as-is by
@@ -282,11 +297,61 @@ func cmdSearch(args []string) {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	product := fs.String("product", "", "limit to one IDE family (e.g. idea, goland)")
 	worktrees := fs.Bool("worktrees", false, "include git worktrees regardless of config")
-	roots := fs.Bool("roots", false, "include un-opened projects from the configured project roots (the `+` variant)")
+	roots := fs.Bool("roots", false, "include projects from the configured project roots (the `+` Projects variant)")
 	query := fs.String("query", "", "current query (recorded so pin/forget can restore it)")
 	keyword := fs.String("keyword", "", "the live Alfred keyword (so pin/forget re-opens the right, possibly-renamed, keyword)")
 	_ = fs.Parse(args)
 	emitSearch(config.Load(), *product, *query, *worktrees, *roots, *keyword)
+}
+
+// projectInVariant reports whether project p belongs in the given variant's
+// view: worktreesFlag = the `~` (worktree-only) variant, scanRoots = the `+`
+// (Projects/project-roots) variant, both false = the plain
+// recents list. It is the single source of truth for variant visibility, shared
+// by the `jb` keyword (emitSearch) and the `runtask` project picker
+// (emitProjectMode) so the two never drift on which projects each variant shows.
+func projectInVariant(p recent.Project, st state.State, cfg config.Config, roots map[string]bool, worktreesFlag, scanRoots bool) bool {
+	if st.IsHidden(p.Path) || !p.Exists || p.Stub || matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
+		// Forgotten, vanished, stub, or user-ignored — never shown in any variant.
+		return false
+	}
+	if !recent.IsGitCheckout(p.Path) && !roots[filepath.Dir(p.Path)] && !st.IsPinned(p.Path) {
+		// No git metadata and not an immediate child of a configured project root —
+		// a leftover, not a real project: a removed worktree's husk (its .git is
+		// gone) or stray build output that lingers nested under a repo. Hidden in
+		// every variant. Worktrees keep their own .git file, so they survive here
+		// wherever they live; root children (incl. un-opened scans) are kept too.
+		// An explicit pin always wins (a husk is never pinned), mirroring how a pin
+		// promotes un-opened/worktree entries into the list.
+		return false
+	}
+	if worktreesFlag && !p.IsWorktree {
+		// The `~` variant is a dedicated worktree list: recents + discovered,
+		// filtered to worktrees. Non-worktrees (including pinned ones) belong to the
+		// plain / `+` lists, not here.
+		return false
+	}
+	if p.IsWorktree {
+		// Worktrees split by origin. The default list mirrors IDE recents, so
+		// JB_EXCLUDE_WORKTREES (and its per-search override) governs only worktrees
+		// that are themselves recents — opened ones. Worktrees discovered on disk
+		// (Unopened) appear ONLY under the explicit `~` variant, never via the
+		// toggle, mirroring how project-root entries appear only under `+`. A pin
+		// promotes either into the normal list, ★-pinned.
+		show := worktreesFlag || !cfg.ExcludeWorktrees
+		if p.Unopened {
+			show = worktreesFlag
+		}
+		if !show && !st.IsPinned(p.Path) {
+			return false
+		}
+	} else if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
+		// Project-root entries show only under the `+` variant — unless
+		// pinned, which (like a durable pin that has aged out of recents) surfaces
+		// them in the normal list too, ★-pinned.
+		return false
+	}
+	return true
 }
 
 // emitSearch renders the Script Filter results for a product family. It records
@@ -307,7 +372,7 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 	projects := withDurablePins(cfg, loadProjects(cfg), st)
 	sortProjects(projects, cfg.Sort)
 	installed := ide.Detect(cfg)
-	showWorktrees := worktreesFlag || !cfg.ExcludeWorktrees
+	roots := projectRootSet(cfg)
 
 	// For a per-IDE keyword, note whether that IDE is actually installed.
 	keywordInstalled := true
@@ -318,50 +383,14 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 	// Pinned projects float to the top, preserving recency order within each group.
 	var pinned, rest []alfred.Item
 	for _, p := range projects {
-		if st.IsHidden(p.Path) {
-			continue // user forgot this project
-		}
-		if !p.Exists {
-			continue // hide recent entries whose directory no longer exists
-		}
-		if p.Stub {
-			continue // hide stubs with no real content (only hidden / ignored entries)
-		}
-		if matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
-			continue // user-configured project-level ignore
-		}
-		if worktreesFlag && !p.IsWorktree {
-			// The `~` variant is a dedicated worktree list: recents + discovered,
-			// filtered to worktrees. Non-worktrees (including pinned ones) belong to
-			// the plain `jb` / `+` lists, not here.
-			continue
-		}
-		if p.IsWorktree {
-			// Worktrees split by origin. The default `jb` list mirrors IDE recents,
-			// so JB_EXCLUDE_WORKTREES (and its per-search override) governs only
-			// worktrees that are themselves recents — opened ones. Worktrees
-			// discovered on disk (Unopened) appear ONLY under the explicit `~`
-			// variant, never via the toggle, mirroring how un-opened projects appear
-			// only under `+`. A pin promotes either into the normal list, ★-pinned,
-			// like any other pinned entry.
-			show := showWorktrees
-			if p.Unopened {
-				show = worktreesFlag
-			}
-			if !show && !st.IsPinned(p.Path) {
-				continue
-			}
-		} else if p.Unopened && !scanRoots && !st.IsPinned(p.Path) {
-			// Un-opened root-scan projects show only under the `+` variant — unless
-			// pinned, which (like a durable pin that has aged out of recents)
-			// surfaces them in the normal list too, ★-pinned.
-			continue
+		if !projectInVariant(p, st, cfg, roots, worktreesFlag, scanRoots) {
+			continue // not part of this variant's view (see projectInVariant)
 		}
 		if product != "" && !familyMatches(p, product) {
-			// Un-opened projects with no implied IDE — from a custom JB_PROJECT_ROOTS,
+			// Project-root entries with no implied IDE — from a custom JB_PROJECT_ROOTS,
 			// which disables auto-detection — are eligible under any per-IDE keyword;
 			// the keyword then drives which IDE opens them (ide.Resolve hard-limits to
-			// it). Coded un-opened entries (auto-detected roots) stay scoped to their
+			// it). Coded project-root entries (auto-detected roots) stay scoped to their
 			// implied IDE, so they don't fan out across every per-IDE keyword.
 			if !(p.Unopened && p.ProductionCode == "") {
 				continue
@@ -387,16 +416,7 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 			matchLabel = target.Display
 		}
 
-		subtitle := alfred.AbbreviateHome(cfg.Home, p.Path)
-		switch {
-		case !found:
-			subtitle += "  —  no IDE installed"
-		case product != "" && !keywordInstalled:
-			subtitle += "  —  " + ide.FamilyDisplay(product) + " not installed"
-		}
-		if branch := recent.GitBranch(p.Path); branch != "" {
-			subtitle += "  ·  ⎇ " + branch
-		}
+		subtitle := projectSubtitle(cfg, p, found, keywordInstalled, product, recent.GitBranch(p.Path))
 
 		// A worktree is otherwise indistinguishable from a normal repo (same icon,
 		// and the ⎇ branch shows for any checkout), so mark it with a leading glyph,
@@ -438,7 +458,7 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 				// not ⌘⌃ — macOS reserves ⌘⌃ chords system-wide.)
 				"alt+shift": {
 					Subtitle: "Run a task in this project…",
-					Arg:      "picktask" + specSep + p.Path,
+					Arg:      "picktask" + specSep + p.Path + specSep + variantSuffix(worktreesFlag, scanRoots),
 					Valid:    alfred.BoolPtr(true),
 				},
 			},
@@ -458,6 +478,25 @@ func emitSearch(cfg config.Config, product, query string, worktreesFlag, scanRoo
 		items = append([]alfred.Item{banner}, items...)
 	}
 	emit(items)
+}
+
+// projectSubtitle builds the row subtitle shared by the Alfred search and the
+// JSON API: the abbreviated path, an optional no-IDE / IDE-not-installed warning
+// (the IDE icon already names the IDE, so the subtitle only warns), and the git
+// branch. branch is passed in so callers that also expose it as a field compute
+// it once. Both frontends call this so their subtitles can't drift.
+func projectSubtitle(cfg config.Config, p recent.Project, found, keywordInstalled bool, product, branch string) string {
+	subtitle := alfred.AbbreviateHome(cfg.Home, p.Path)
+	switch {
+	case !found:
+		subtitle += "  —  no IDE installed"
+	case product != "" && !keywordInstalled:
+		subtitle += "  —  " + ide.FamilyDisplay(product) + " not installed"
+	}
+	if branch != "" {
+		subtitle += "  ·  ⎇ " + branch
+	}
+	return subtitle
 }
 
 // updateBanner returns an informational "update available" row for the unified
@@ -768,7 +807,7 @@ func updateApply() {
 	url, ok := rel.WorkflowAsset()
 	if !ok {
 		// No packaged asset — open the release page so the user can grab it.
-		_ = exec.Command("open", rel.HTMLURL).Run()
+		_ = exec.Command("/usr/bin/open", rel.HTMLURL).Run()
 		updateFail("That release has no downloadable asset — opened its page instead")
 	}
 	path, err := update.Download(url)
@@ -777,7 +816,7 @@ func updateApply() {
 	}
 	// Opening the .alfredworkflow hands it to Alfred, which imports it in place
 	// (same bundle id), preserving config + pins/forgets.
-	if err := exec.Command("open", path).Run(); err != nil {
+	if err := exec.Command("/usr/bin/open", path).Run(); err != nil {
 		updateFail("Couldn't open the downloaded update — " + err.Error())
 	}
 }
@@ -865,7 +904,7 @@ func cmdDoctor() {
 	}
 	line("")
 
-	var shown, missing, stub, worktrees, hidden, ignored, unopened int
+	var shown, missing, stub, worktrees, hidden, ignored, projectRootEntries int
 	for _, p := range projects {
 		switch {
 		case st.IsHidden(p.Path):
@@ -879,7 +918,7 @@ func cmdDoctor() {
 		case p.IsWorktree:
 			worktrees++
 		case p.Unopened:
-			unopened++ // shown only under the `+` variant
+			projectRootEntries++ // shown only under the `+` variant
 		default:
 			shown++
 		}
@@ -894,7 +933,7 @@ func cmdDoctor() {
 	line("  hidden — stub (no real content): %d", stub)
 	line("  hidden — ignore pattern: %d", ignored)
 	line("  hidden — worktree:     %d (use <keyword>~ to show)", worktrees)
-	line("  un-opened (root scan): %d (use <keyword>+ to show)", unopened)
+	line("  project-root entries:  %d (use <keyword>+ to show)", projectRootEntries)
 	line("  hidden — forgotten:    %d", hidden)
 	line("  pinned:                %d", len(st.Pinned))
 }
@@ -1126,6 +1165,21 @@ func keywordFor(product string, worktrees, roots bool) string {
 	return kw
 }
 
+// variantSuffix returns the runtask keyword suffix ("~", "+", or "") for the
+// active variant. It's carried in the picktask spec so that, after picking a
+// project, the runtask "back"/reopen plumbing returns to the same widened picker
+// the project was chosen from.
+func variantSuffix(worktrees, roots bool) string {
+	switch {
+	case worktrees:
+		return "~"
+	case roots:
+		return "+"
+	default:
+		return ""
+	}
+}
+
 type lastSearch struct {
 	Keyword string `json:"keyword"`
 	Query   string `json:"query"`
@@ -1164,7 +1218,7 @@ func reopenAlfred(dataDir string) {
 	ls := loadLastSearch(dataDir)
 	text := ls.Keyword + " " + ls.Query // trailing space (empty query) enters keyword arg mode
 	script := `tell application id "com.runningwithcrayons.Alfred" to search ` + applescriptQuote(text)
-	_ = exec.Command("osascript", "-e", script).Run()
+	_ = exec.Command("/usr/bin/osascript", "-e", script).Run()
 }
 
 func applescriptQuote(s string) string {
@@ -1173,8 +1227,13 @@ func applescriptQuote(s string) string {
 	return `"` + s + `"`
 }
 
-func emit(items []alfred.Item) {
-	out, err := alfred.Render(items)
+func emit(items []alfred.Item) { emitWithRerun(items, 0) }
+
+// emitWithRerun is emit with an Alfred `rerun` interval (seconds) so Alfred
+// re-runs the Script Filter automatically — used to poll a background job and
+// update the list in place. A zero interval omits the field.
+func emitWithRerun(items []alfred.Item, rerun float64) {
+	out, err := alfred.RenderWithRerun(items, rerun)
 	if err != nil {
 		fail(fmt.Sprintf("render: %v", err))
 	}

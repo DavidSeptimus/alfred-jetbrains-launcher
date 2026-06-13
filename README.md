@@ -16,6 +16,11 @@ launch. The workflow hides those by default (worktrees are one keystroke away
 when you *do* want them), so the list stays to the projects you'd actually
 reopen.
 
+There's also a **Raycast** edition: a sibling extension in
+[`raycast/jetbrains-project-launcher/`](raycast/jetbrains-project-launcher/) that
+drives the same `jb` binary, so both launchers share project discovery, filtering,
+and task-running. The rest of this README documents the Alfred workflow.
+
 > Not affiliated with, sponsored by, or endorsed by JetBrains. See
 > [Trademarks](#trademarks--attribution).
 
@@ -32,8 +37,8 @@ reopen.
   if a different version of that IDE is already running, it reuses it.
 - **Unified + per-IDE keywords** — `jb` for everything, or `idea` / `goland` /
   `pycharm` / … to scope to one IDE.
-- **Un-opened projects too** — the `+` variant (`jb+`, `idea+`) surfaces
-  freshly-cloned projects you've never opened, auto-detecting your
+- **Project-root search too** — the `+` variant (`jb+`, `idea+`) surfaces
+  freshly-cloned projects from your project roots, auto-detecting your
   `~/<IDE>Projects` folders (override via config) and kept out of the default list.
 - **A dedicated worktree list** — the `~` variant (`jb~`, `idea~`) shows *only*
   your linked **git worktrees**, found on disk via git (wherever they live — e.g.
@@ -129,17 +134,17 @@ sets `release`).
 | `idea`, `pycharm`, `webstorm`, `goland`, `clion`, `rubymine`, `datagrip`, `phpstorm`, `rider`, `rustrover`, `studio`, `dataspell`, `aqua`, `writerside` | Scoped to that IDE                                                                                                                          |
 | `fleet`, `air`                                                                                                                                          | Scoped to Fleet / Air workspaces                                                                                                            |
 | `<keyword>~`                                                                                                                                            | A dedicated list of **just your git [worktrees](#git-worktrees-the--variant)** — discovered on disk, not only opened ones (`jb~`, `goland~`, …) |
-| `<keyword>+`                                                                                                                                            | The same search, **plus un-opened projects** found in your configured [project roots](#un-opened-projects-the--variant) (`jb+`, `idea+`, …) |
+| `<keyword>+`                                                                                                                                            | The same search, **plus projects** found in your configured [project roots](#projects-the--variant) (`jb+`, `idea+`, …) |
 
 Alfred fuzzy-matches your query against the project name and its path
 components, so `jb webfoo` finds `~/work/web/foo`.
 
-#### Un-opened projects (the `+` variant)
+#### Projects (the `+` variant)
 
-Everything above comes from your IDEs' recents — a project is only listed once
+The plain keywords come from your IDEs' recents — a project is only listed once
 an IDE has *opened* it. So a freshly `git clone`d repo you've never opened is
-invisible. The `+` variant adds every immediate subfolder of your **project
-roots**, even ones never opened.
+invisible. The `+` variant is the broader **Projects** list: recents plus every
+immediate subfolder of your **project roots**.
 
 By default it **auto-detects** the conventional JetBrains folders under your home
 — `~/<IDE>Projects` for the classic IDEs and Android Studio (`~/IdeaProjects`,
@@ -148,7 +153,7 @@ Fleet and Air — matched case-insensitively, and only those that actually exist
 Set **Project roots** (`JB_PROJECT_ROOTS`) to a `:`-separated list to point it
 somewhere else instead.
 
-Because an auto-detected folder names its IDE, an un-opened project **opens in
+Because an auto-detected folder names its IDE, a project-root entry **opens in
 the IDE its root implies** — a folder in `~/GolandProjects` opens in GoLand, even
 under unified `jb+` — falling back through the [resolution
 chain](#which-ide-opens-a-project) when that IDE isn't installed. Folders from a
@@ -156,13 +161,13 @@ custom `JB_PROJECT_ROOTS` imply no IDE: under `jb+` they use the fallback chain,
 and you can steer them with a **per-IDE `+` keyword** (`goland+` opens the
 highlighted folder in GoLand).
 
-These results stay **out of the plain `jb` list**, appearing only when you ask
-with `+` — with one exception: **pin** an un-opened project (⌘⇧) and it's
+Project-root-only results stay **out of the plain `jb` list**, appearing only when you ask
+with `+` — with one exception: **pin** one (⌘⇧) and it's
 promoted into the normal list too, ★-pinned, just like a durable pin that has
 aged out of recents. **Forget** one (⌘⌥) and it's hidden from `jb+`; that hide is
 durable and path-keyed, so if you later actually open the project it **stays
 hidden** from your recents until you restore it with `jb forget --clear`. Once an
-un-opened project is opened in an IDE it simply becomes a normal recent, carrying
+a project-root entry is opened in an IDE it simply becomes a normal recent, carrying
 whatever pin/forget state you'd attached to it.
 
 #### Git worktrees (the `~` variant)
@@ -175,7 +180,7 @@ project it knows (your recents and `+` project roots) it asks git for that repo'
 worktrees and lists them all, including never-opened ones.
 
 The three keywords give you three distinct lists: `jb` is your recents, `jb+` is
-your projects (recents + un-opened, no worktrees), and `jb~` is your worktrees.
+your projects (recents + project roots, no worktrees), and `jb~` is your worktrees.
 Worktree rows are still marked with a **`⑂`** glyph in their title (after the `★`
 pin marker if pinned) so they're recognisable when `JB_EXCLUDE_WORKTREES` is off
 and recent worktrees mix into the plain `jb` list; you can also type `worktree`
@@ -191,7 +196,7 @@ skipped without running git at all.
 A discovered worktree **opens in the same IDE as its parent repo**, and an
 already-opened worktree keeps its own real IDE association and recency.
 
-Disk discovery is exclusive to `~` — just as un-opened projects are exclusive to
+Disk discovery is exclusive to `~` — just as project-root entries are exclusive to
 `+`. The default `jb` list mirrors your IDE recents, so unticking **Exclude git
 worktrees** in the workflow config (`JB_EXCLUDE_WORKTREES`) only stops *recent*
 (already-opened) worktrees from being filtered out of every search; worktrees
@@ -242,7 +247,12 @@ Beyond opening a project, the workflow can **run its build-system tasks** in a
 terminal. Two ways in:
 
 - **`runtask`** — a standalone keyword: pick a project, then pick a task. Both
-  steps filter as you type.
+  steps filter as you type. Its project picker mirrors `jb` (your IDE recents),
+  and it takes the same `+`/`~` modifiers: **`runtask+`** also lists projects
+  from your roots, and **`runtask~`** is a git-worktree picker — each
+  exactly the project set the matching `jb`/`jb+`/`jb~` keyword shows. (The
+  modifiers always open the picker, even if you'd already scoped `runtask` to a
+  project — they're how you say "let me pick a different one".)
 - **⌥⇧ on any `jb` result** — jumps straight into that project's tasks.
 
 ![Typing runtask to pick a project, then choosing a detected build task to run it in a terminal](docs/img/runtask.gif)
@@ -254,7 +264,7 @@ It detects tasks from whatever the project uses, with no setup:
 | npm / pnpm / yarn / bun | `package.json`                               | picks the package manager from your lockfile                                                                                                                    |
 | Make                    | `Makefile`                                   |                                                                                                                                                                 |
 | just · Taskfile · Rake  | `justfile` · `Taskfile.yml` · `Rakefile`     | needs the tool installed                                                                                                                                        |
-| **Gradle**              | `build.gradle[.kts]`                         | runs `./gradlew tasks` to list the project's **real** tasks (including custom ones like `runIde`, `buildPlugin`) — cached, so it's instant after the first time |
+| **Gradle**              | `build.gradle[.kts]`                         | runs `./gradlew tasks` to list the project's **real** tasks (including custom ones like `runIde`, `buildPlugin`) — cached, so it's instant after the first time (use **↻ Refresh tasks** to rescan) |
 | Maven                   | `pom.xml`                                    | common lifecycle goals                                                                                                                                          |
 | Cargo · Go · .NET       | `Cargo.toml` · `go.mod` · `*.csproj`/`*.sln` | common commands (`build`/`test`/`run`/…)                                                                                                                        |
 | Composer · Deno         | `composer.json` · `deno.json[c]`             | scripts / tasks                                                                                                                                                 |
@@ -262,6 +272,16 @@ It detects tasks from whatever the project uses, with no setup:
 A task whose tool isn't on your `PATH` still shows, but greyed (you can still
 copy its command). Tasks run in your **login shell**, so anything on your `PATH`
 resolves.
+
+**Refreshing Gradle tasks.** Gradle is the one runner whose list is cached (every
+other runner is re-read from disk each keystroke). When the cache might be stale —
+after you add or rename a task — pick the **↻ Refresh tasks** row to rescan. It
+re-enumerates in the background while a live *Refreshing Gradle tasks…* row shows,
+and the list updates itself the moment the rescan lands (no need to retype). If
+the rescan fails (e.g. a broken build), it falls back to the default Gradle verbs
+and shows a brief error row instead of hanging. The cache also auto-refreshes when
+the build files change or after 24h, so manual refresh is only for the in-between
+cases.
 
 ### Launching a task
 
@@ -278,8 +298,10 @@ Modifiers on a task:
 
 `runtask` **stays scoped to the last project** you ran something in — reopen it
 and you're back on that project's tasks (handy for iterating). Pick **⬅ Switch
-project** (or use ⇧ above) to go back to the picker. The **`rerun`** keyword
-re-runs your most recent task directly.
+project** (or use ⇧ above) to go back to the picker — and if you'd reached the
+project through `runtask+`/`runtask~`, *Switch project* returns you to that same
+widened picker, not just your recents. The **`rerun`** keyword re-runs your most
+recent task directly.
 
 The launch terminal is configurable: **Terminal.app**, **iTerm2**, and
 **Ghostty** are built in, or set a `JB_TASK_TERMINAL_CMD` template for any other
@@ -314,7 +336,7 @@ Open **Configure Workflow…** in Alfred:
 | Ignore projects       | `JB_IGNORE_PROJECTS`   | _(none)_                         | Comma-separated globs matched against a project's name and full path; matches are hidden (e.g. `*-scratch`, `~/Downloads/*`)                                                                                                                                                     |
 | Config roots          | `JB_CONFIG_ROOTS`      | standard JetBrains & Google dirs | `:`-separated dirs holding per-version IDE config dirs                                                                                                                                                                                                                           |
 | Application folders   | `JB_APP_ROOTS`         | `/Applications:~/Applications`   | `:`-separated folders scanned for JetBrains `.app` bundles                                                                                                                                                                                                                       |
-| Project roots         | `JB_PROJECT_ROOTS`     | auto-detected `~/<IDE>Projects`  | `:`-separated dirs whose immediate subfolders are offered as un-opened projects via the `<keyword>+` variant. Empty = auto-detect the conventional folders; set to override                                                                                                      |
+| Project roots         | `JB_PROJECT_ROOTS`     | auto-detected `~/<IDE>Projects`  | `:`-separated dirs whose immediate subfolders are offered via the `<keyword>+` Projects variant. Empty = auto-detect the conventional folders; set to override                                                                                                                   |
 | Toolbox script dirs   | `JB_TOOLBOX_DIR`       | standard Toolbox scripts dir     | `:`-separated dirs of Toolbox launcher scripts                                                                                                                                                                                                                                   |
 
 The path fields are **pre-filled with their defaults**, so you can see and edit
@@ -368,6 +390,11 @@ Studio, plus **Fleet** and **Air** (whose recent *workspaces* are read from thei
 - Projects whose directory no longer exists on disk.
 - Stub directories with no visible files (only hidden entries like `.idea` or
   `.git` remain — e.g. a removed worktree), and empty directories.
+- Leftover directories that aren't a project anymore — anything with **no git
+  checkout of its own that also isn't a direct child of one of your project
+  roots** (e.g. a **removed worktree's husk** left behind with only build output
+  and `.idea`). Real repos and live worktrees keep their `.git`, so they're never
+  caught; a non-git folder you keep directly under a project root is still shown.
 - Linked git worktrees, unless you use a `~` keyword or untick the setting.
 - Remote-dev / devcontainer entries (detected and skipped).
 
@@ -403,6 +430,17 @@ The binary speaks Alfred Script Filter JSON on stdout:
 ./build/jb-bundle/jb doctor          # diagnostics: detected IDEs, roots, why things are hidden
 ```
 
+The same binary also exposes a **frontend-neutral JSON** interface — `jb api
+projects|ides|tasks|rerun` — which is what the Raycast extension consumes (it
+shares the discovery, filtering, and task-running core; only the output shape
+differs from the Alfred Script Filter JSON above):
+
+```sh
+./build/jb-bundle/jb api projects --variant recent | jq '.items | length'
+./build/jb-bundle/jb api projects --variant worktrees | jq '.items[].title'
+./build/jb-bundle/jb api tasks --path ~/myproject | jq '.items[].title'
+```
+
 ---
 
 ## Development
@@ -412,16 +450,17 @@ update check, and the first-run quarantine self-heal — are diagrammed in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
-cmd/jb            workflow backend: search / ides / open / action / tasks / runtask / refresh
+cmd/jb            shared backend: search / ides / open / action / tasks / runtask / refresh (Alfred), plus api (frontend-neutral JSON for Raycast)
 cmd/genplist      generates info.plist + per-object canvas icons from workflow/ides.json
 internal/discover find every recent file across all version dirs
 internal/recent   parse + merge/dedupe (worktree, .idea-only, existence checks)
 internal/ide      product catalogue, installed-IDE detection, resolution, running check
 internal/launch   open / reveal / copy / terminal / custom open command
 internal/tasklaunch  run a task in a terminal tab/window, background, or copy
-internal/alfred   Script Filter JSON
+internal/alfred   Script Filter JSON (and shared helpers like AbbreviateHome/Icon)
 internal/cache    mtime-keyed cache of the merged list
 taskrunner/       standalone, Alfred-agnostic module: detect build-system tasks (own go.mod)
+raycast/jetbrains-project-launcher  Raycast extension (TypeScript) over the same jb binary (own go.mod; build via scripts/prepare-backend.mjs)
 workflow/ides.json  the IDE/keyword table that drives the generated plist
 assets/icons      vendored fallback IDE icons; assets/icon.png is the workflow icon
 scripts/gen-task-icons.sh  (re)generate the task-runner icons from JetBrains' icon set

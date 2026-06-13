@@ -27,7 +27,7 @@ func TestOpenArgvHandlesSpaces(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	want := []string{"open", "-na", "/Users/dave/Applications/IntelliJ IDEA.app", "--args", "/Users/dave/My Projects/demo"}
+	want := []string{macosOpen, "-na", "/Users/dave/Applications/IntelliJ IDEA.app", "--args", "/Users/dave/My Projects/demo"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("argv:\n got %q\nwant %q", got, want)
 	}
@@ -41,15 +41,15 @@ func TestOpenNoAppErrors(t *testing.T) {
 
 func TestRevealAndTerminalArgv(t *testing.T) {
 	got := captureArgv(t, func() { _ = Reveal("/Users/dave/My Project") })
-	if !reflect.DeepEqual(got, []string{"open", "-R", "/Users/dave/My Project"}) {
+	if !reflect.DeepEqual(got, []string{macosOpen, "-R", "/Users/dave/My Project"}) {
 		t.Errorf("reveal argv: %q", got)
 	}
 	got = captureArgv(t, func() { _ = Terminal("iTerm", "/Users/dave/My Project") })
-	if !reflect.DeepEqual(got, []string{"open", "-a", "iTerm", "/Users/dave/My Project"}) {
+	if !reflect.DeepEqual(got, []string{macosOpen, "-a", "iTerm", "/Users/dave/My Project"}) {
 		t.Errorf("terminal argv: %q", got)
 	}
 	got = captureArgv(t, func() { _ = Terminal("", "/x") }) // empty -> default Terminal
-	if !reflect.DeepEqual(got, []string{"open", "-a", "Terminal", "/x"}) {
+	if !reflect.DeepEqual(got, []string{macosOpen, "-a", "Terminal", "/x"}) {
 		t.Errorf("terminal default argv: %q", got)
 	}
 }

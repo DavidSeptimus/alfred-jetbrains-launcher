@@ -15,6 +15,11 @@ import (
 // execCommand is a seam so tests can capture the argv without executing.
 var execCommand = exec.Command
 
+const (
+	macosOpen   = "/usr/bin/open"
+	macosPbcopy = "/usr/bin/pbcopy"
+)
+
 // Open launches the project in the given IDE via `open -na <App> --args <path>`.
 // Passing the .app bundle path (not the inner MacOS launcher) lets macOS handle
 // activation, and a single argv element avoids the quote-mangling the Toolbox
@@ -23,17 +28,17 @@ func Open(target ide.Installed, projectPath string) error {
 	if target.AppPath == "" {
 		return fmt.Errorf("no application found for %s", target.Display)
 	}
-	return execCommand("open", "-na", target.AppPath, "--args", projectPath).Run()
+	return execCommand(macosOpen, "-na", target.AppPath, "--args", projectPath).Run()
 }
 
 // Reveal shows the project directory in Finder.
 func Reveal(projectPath string) error {
-	return execCommand("open", "-R", projectPath).Run()
+	return execCommand(macosOpen, "-R", projectPath).Run()
 }
 
 // CopyPath copies the project path to the clipboard.
 func CopyPath(projectPath string) error {
-	cmd := execCommand("pbcopy")
+	cmd := execCommand(macosPbcopy)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -56,7 +61,7 @@ func Terminal(app, projectPath string) error {
 	if app == "" {
 		app = "Terminal"
 	}
-	return execCommand("open", "-a", app, projectPath).Run()
+	return execCommand(macosOpen, "-a", app, projectPath).Run()
 }
 
 // OpenCommand runs the user's custom open command for a project (the ⌃⇧ action).

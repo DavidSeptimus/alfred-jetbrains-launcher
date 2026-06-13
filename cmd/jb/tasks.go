@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,14 @@ import (
 // changes are eventually picked up.
 const gradleTaskTTL = 24 * time.Hour
 
+// gradleEnumLease bounds how long the Gradle enumeration sidecar markers are
+// trusted. For the spawn marker, within the lease means an enumeration is in
+// flight (debounces re-spawns, drives the live "refreshing" row); for the error
+// marker, within the lease means a recent failure (shows the error row, cools
+// down auto-respawns). Past it, either marker is treated as a crashed/expired
+// leftover. Sized to cover a slow cold `./gradlew tasks`.
+const gradleEnumLease = 90 * time.Second
+
 // cmdTasks drives the two-level `runtask` keyword (--runtask): a project picker
 // and, once a project is chosen, its task list — both natively filterable
 // because the selected project lives in state, not the query. With
@@ -41,6 +50,8 @@ func cmdTasks(args []string) {
 	path := fs.String("path", "", "project path (for --enumerate-gradle, or a direct task list)")
 	enumerateGradle := fs.Bool("enumerate-gradle", false, "background: enumerate Gradle tasks and cache them")
 	query := fs.String("query", "", "filter text typed after the keyword")
+	worktrees := fs.Bool("worktrees", false, "runtask project picker: the `~` variant (worktrees only)")
+	roots := fs.Bool("roots", false, "runtask project picker: the `+` Projects variant")
 	_ = fs.Parse(args)
 	cfg := config.Load()
 
@@ -53,7 +64,7 @@ func cmdTasks(args []string) {
 	case *rerun:
 		emitRerun(cfg)
 	case *runtask:
-		emitRuntask(cfg, *query)
+		emitRuntask(cfg, *query, *worktrees, *roots)
 	case *path != "":
 		emitTaskList(cfg, *path) // direct task list for a known project (CLI / debug)
 	default:
@@ -91,38 +102,43 @@ func emitRerun(cfg config.Config) {
 	}})
 }
 
-// emitRuntask renders the active level of the runtask keyword: the task list for
-// the project recorded in state (if any still exists), otherwise the project
-// picker. query filters the rows.
-func emitRuntask(cfg config.Config, query string) {
-	if target := loadRuntaskTarget(cfg); target != "" && dirExists(target) {
-		emitTaskMode(cfg, target, query)
-		return
+// emitRuntask renders the active level of the runtask keyword. The plain keyword
+// is two-level: the task list for the project recorded in state (if any still
+// exists), otherwise the project picker. The `+`/`~` variants (worktreesFlag /
+// scanRoots) instead *always* show the (widened) picker — invoking them is an
+// explicit "I'm looking for a project" gesture, so they bypass the saved target
+// rather than dropping the user back into its task list. They don't clear the
+// target either: dismissing a variant picker leaves the prior selection intact.
+// query filters the rows.
+func emitRuntask(cfg config.Config, query string, worktreesFlag, scanRoots bool) {
+	if !worktreesFlag && !scanRoots {
+		if target := loadRuntaskTarget(cfg); target != "" && dirExists(target) {
+			emitTaskMode(cfg, target, query)
+			return
+		}
 	}
-	emitProjectMode(cfg, query)
+	emitProjectMode(cfg, query, worktreesFlag, scanRoots)
 }
 
-// emitProjectMode lists the projects to choose from (the same visible set as the
-// `jb` keyword), filtered by query. Selecting one records it and re-opens
-// runtask on its tasks.
-func emitProjectMode(cfg config.Config, query string) {
+// emitProjectMode lists the projects to choose from, filtered by query. The
+// candidate set mirrors the `jb` keyword's exactly — same projectInVariant
+// gating — so the plain picker shows recents, `+` adds project-root entries,
+// and `~` is the worktree-only list. Selecting one records it (with
+// the active variant) and re-opens runtask on its tasks.
+func emitProjectMode(cfg config.Config, query string, worktreesFlag, scanRoots bool) {
 	st := state.Load(cfg.DataDir)
 	projects := withDurablePins(cfg, loadProjects(cfg), st)
 	sortProjects(projects, cfg.Sort)
 	installed := ide.Detect(cfg)
+	roots := projectRootSet(cfg)
+	variant := variantSuffix(worktreesFlag, scanRoots)
 
 	var pinned, rest []alfred.Item
 	for _, p := range projects {
-		if st.IsHidden(p.Path) || !p.Exists || p.Stub || matchesProjectIgnore(p.Path, cfg.IgnoreProjects) {
+		if !projectInVariant(p, st, cfg, roots, worktreesFlag, scanRoots) {
 			continue
 		}
-		if p.IsWorktree && cfg.ExcludeWorktrees {
-			continue
-		}
-		if p.Unopened && !st.IsPinned(p.Path) {
-			continue // root-scan entries only surface under the `+` variant elsewhere
-		}
-		item := projectPickItem(cfg, p, installed, st.IsPinned(p.Path))
+		item := projectPickItem(cfg, p, installed, st.IsPinned(p.Path), variant)
 		if !queryMatches(query, item.Title+" "+item.Match) {
 			continue
 		}
@@ -135,30 +151,49 @@ func emitProjectMode(cfg config.Config, query string) {
 
 	items := append(pinned, rest...)
 	if len(items) == 0 {
-		items = append(items, noMatchItem(query, "project", "Open a project in an IDE, then try again"))
+		items = append(items, noMatchItem(query, "project", projectPickerEmptyHint(worktreesFlag, scanRoots)))
 	}
 	emit(items)
 }
 
+// projectPickerEmptyHint tailors the empty-state hint to the active picker
+// variant, matching how each variant sources its projects.
+func projectPickerEmptyHint(worktreesFlag, scanRoots bool) string {
+	switch {
+	case worktreesFlag:
+		return "No git worktrees of your projects were found"
+	case scanRoots:
+		return "No projects found in your roots"
+	default:
+		return "Open a project in an IDE, then try again"
+	}
+}
+
 // projectPickItem is a project row in the picker. ↩ records it as the runtask
-// target (a "picktask" spec); the launch action handles the rest. The
-// launch-kind modifiers are disabled here — they only mean something on a task
-// row.
-func projectPickItem(cfg config.Config, p recent.Project, installed []ide.Installed, pinned bool) alfred.Item {
+// target (a "picktask" spec carrying the active variant, so "back" returns to
+// the same widened picker); the launch action handles the rest. The launch-kind
+// modifiers are disabled here — they only mean something on a task row.
+func projectPickItem(cfg config.Config, p recent.Project, installed []ide.Installed, pinned bool, variant string) alfred.Item {
 	family := ide.FamilyOf(p.ProductionCode)
 	subtitle := alfred.AbbreviateHome(cfg.Home, p.Path)
 	if branch := recent.GitBranch(p.Path); branch != "" {
 		subtitle += "  ·  ⎇ " + branch
 	}
-	title := p.DisplayName
+	// A worktree is otherwise indistinguishable from a normal repo, so mark it
+	// with the same leading glyph the `jb` keyword uses, after any ★ pin marker.
+	name := p.DisplayName
+	if p.IsWorktree {
+		name = worktreeGlyph + " " + name
+	}
+	title := name
 	if pinned {
-		title = "★ " + title
+		title = "★ " + name
 	}
 	no := alfred.BoolPtr(false)
 	return alfred.Item{
 		Title:    title,
 		Subtitle: subtitle,
-		Arg:      "picktask" + specSep + p.Path,
+		Arg:      "picktask" + specSep + p.Path + specSep + variant,
 		Match:    matchString(p, family, ""),
 		Icon:     iconForFamily(family, installed),
 		Valid:    alfred.BoolPtr(true),
@@ -181,9 +216,32 @@ func emitTaskMode(cfg config.Config, path, query string) {
 		Icon:     &alfred.Icon{Path: iconPath("")},
 		Valid:    alfred.BoolPtr(true),
 	}
+	// Detect first: a cold drill-in spawns the background Gradle enumeration here
+	// (creating the in-flight marker), so the in-flight check below must run after
+	// it to catch that first paint and start polling immediately.
+	tasks := detectProjectTasks(cfg, path)
+
 	items := []alfred.Item{back}
+	// While a Gradle enumeration is running, show a live "refreshing" row instead
+	// of the (re-)refresh row and ask Alfred to re-poll, so the list swaps to the
+	// fresh tasks on its own when the background job lands. Otherwise offer the
+	// manual rescan row.
+	refreshing := gradleEnumInFlight(cfg, path)
+	if refreshing {
+		items = append(items, gradleRefreshingItem())
+	} else {
+		// A recent failure surfaces an error row above the (still-offered) manual
+		// refresh row, so the user knows the list is the fixed-verb fallback and can
+		// retry.
+		if gradleEnumErrored(cfg, path) {
+			items = append(items, gradleErrorItem())
+		}
+		if refresh, ok := gradleRefreshItem(cfg, path); ok {
+			items = append(items, refresh)
+		}
+	}
 	matched := 0
-	for _, t := range detectProjectTasks(cfg, path) {
+	for _, t := range tasks {
 		it := taskItem(cfg, t)
 		if !queryMatches(query, it.Title+" "+it.Match) {
 			continue
@@ -194,7 +252,86 @@ func emitTaskMode(cfg config.Config, path, query string) {
 	if matched == 0 {
 		items = append(items, noMatchItem(query, "task", "No npm / Make / just / Taskfile / Gradle / Maven tasks in "+alfred.AbbreviateHome(cfg.Home, path)))
 	}
+	if refreshing {
+		emitWithRerun(items, gradleRerunInterval)
+		return
+	}
 	emit(items)
+}
+
+// gradleRerunInterval is how often Alfred re-runs the runtask Script Filter while
+// a Gradle enumeration is in flight, so the list updates in place when it lands.
+const gradleRerunInterval = 0.7
+
+// gradleRefreshItem is the manual "rescan" row, shown only for Gradle projects
+// (the one runner whose task list is cached and can go stale; every other runner
+// is re-detected from disk on each keystroke). It kicks a background re-enumeration
+// and reopens the keyword, which then shows the live "refreshing" row and polls
+// until the fresh list lands — so Alfred never blocks on the slow `./gradlew
+// tasks`. The path travels in the spec so the action needs no state read.
+func gradleRefreshItem(cfg config.Config, path string) (alfred.Item, bool) {
+	disabled := disabledRunners(cfg.TaskDisable)
+	if runnerDisabled(disabled, taskrunner.RunnerGradle) || taskrunner.GradleFingerprint(path) == "" {
+		return alfred.Item{}, false
+	}
+	return alfred.Item{
+		Title:    "↻ Refresh tasks",
+		Subtitle: "Re-enumerate Gradle tasks (the cached list may be stale)",
+		Arg:      "refresh" + specSep + path,
+		Match:    "refresh rescan reload gradle tasks",
+		Icon:     &alfred.Icon{Path: iconPathOr("gradle", "run")},
+		Valid:    alfred.BoolPtr(true),
+	}, true
+}
+
+// gradleRefreshingItem is the live progress row shown while a Gradle enumeration
+// is running. It's inert (not actionable) — the Script Filter's rerun swaps it
+// for the fresh task list automatically once the background job completes.
+func gradleRefreshingItem() alfred.Item {
+	info := alfred.Info("↻ Refreshing Gradle tasks…", "Re-enumerating in the background — the list updates automatically")
+	info.Icon = &alfred.Icon{Path: iconPathOr("gradle", "run")}
+	return info
+}
+
+// gradleErrorItem is shown when the most recent Gradle enumeration failed. It's
+// inert; the manual refresh row beside it lets the user retry (which clears the
+// error sentinel). The fixed-verb tasks are still listed below it.
+func gradleErrorItem() alfred.Item {
+	info := alfred.Info("⚠ Gradle task refresh failed", "Showing default tasks — select ↻ Refresh tasks to retry")
+	info.Icon = &alfred.Icon{Path: iconPathOr("gradle", "")}
+	return info
+}
+
+// gradleSpawnMarker / gradleErrorMarker are the sidecar files next to a project's
+// Gradle task cache: the spawn marker signals an enumeration in flight; the error
+// marker records that the last enumeration failed.
+func gradleSpawnMarker(cfg config.Config, path string) string {
+	return gradleCachePath(cfg, path) + ".spawning"
+}
+func gradleErrorMarker(cfg config.Config, path string) string {
+	return gradleCachePath(cfg, path) + ".error"
+}
+
+// gradleEnumInFlight reports whether a background Gradle enumeration for path is
+// currently running, detected via its (still-fresh) spawn marker. A stale marker
+// (a crashed enumeration that never cleaned up) reads as not-in-flight so the
+// loading row and rerun loop don't persist forever.
+func gradleEnumInFlight(cfg config.Config, path string) bool {
+	return markerFresh(gradleSpawnMarker(cfg, path))
+}
+
+// gradleEnumErrored reports whether the most recent enumeration failed within the
+// lease window — drives the error row and (via spawnGradleEnumeration) the
+// cooldown that stops a broken build from retrying on every keystroke.
+func gradleEnumErrored(cfg config.Config, path string) bool {
+	return markerFresh(gradleErrorMarker(cfg, path))
+}
+
+// markerFresh reports whether a sidecar marker file exists and is within the
+// lease window (a stale one is treated as absent — a crashed leftover).
+func markerFresh(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && time.Since(info.ModTime()) < gradleEnumLease
 }
 
 // queryMatches reports whether every whitespace-separated token of query appears
@@ -262,17 +399,26 @@ func detectProjectTasks(cfg config.Config, path string) []taskrunner.Task {
 // in the default view (a tab, or a window when JB_TASK_WINDOW is set), ⌘ in the
 // other view, ⌥ in the background, ⌃ copies, ⇧ runs in the default view then
 // resets to the project picker.
-func taskItem(cfg config.Config, t taskrunner.Task) alfred.Item {
-	cmdline := shellJoinArgv(t.Command)
+// taskSubtitle builds the row subtitle shared by the Alfred task list and the
+// JSON API: the runner, then the task's description (or its command line), then
+// a "not found" note when the tool is missing. Shared so the two frontends can't
+// drift; the len guard keeps a non-runnable task with an empty argv from panicking.
+func taskSubtitle(t taskrunner.Task, cmdline string) string {
 	subtitle := string(t.Runner)
 	if t.Desc != "" {
 		subtitle += "  ·  " + t.Desc
 	} else {
 		subtitle += "  ·  " + cmdline
 	}
-	if !t.Runnable {
+	if !t.Runnable && len(t.Command) > 0 {
 		subtitle += "   —   " + t.Command[0] + " not found"
 	}
+	return subtitle
+}
+
+func taskItem(cfg config.Config, t taskrunner.Task) alfred.Item {
+	cmdline := shellJoinArgv(t.Command)
+	subtitle := taskSubtitle(t, cmdline)
 
 	spec := func(kind string) string {
 		return kind + specSep + t.Cwd + specSep + cmdline
@@ -312,11 +458,30 @@ func cmdRuntask(args []string) {
 	kind, rest, _ := strings.Cut(*spec, specSep)
 	switch kind {
 	case "picktask":
-		setRuntaskTarget(cfg, rest)
-		reopenRuntask()
+		// rest is path<US>variant — record both, then reopen the *plain* keyword so
+		// it lands in this project's task list (the variant keywords force the picker,
+		// so reopening one of them would bounce straight back out).
+		path, variant, _ := strings.Cut(rest, specSep)
+		setRuntaskTarget(cfg, path, variant)
+		reopenRuntask("")
 	case "back":
+		// Drop the project but keep the variant, and reopen that variant's picker so
+		// the user returns to the same (possibly widened) project list they came from.
+		variant := loadRuntaskState(cfg).Variant
 		clearRuntaskTarget(cfg)
-		reopenRuntask()
+		reopenRuntask(variant)
+	case "refresh":
+		// Kick a background re-enumeration of the project's Gradle tasks and reopen
+		// immediately — the reopened keyword shows the live "refreshing" row and
+		// polls (via Alfred rerun) until the fresh cache lands, so Alfred never
+		// blocks on the slow `./gradlew tasks`. spawnGradleEnumeration always
+		// re-enumerates (it never consults the cache), so a manual refresh refreshes
+		// even a currently-valid cache; an already-running enumeration is reused.
+		// Clear any error sentinel first so a manual retry isn't suppressed by the
+		// post-failure cooldown.
+		_ = os.Remove(gradleErrorMarker(cfg, rest))
+		spawnGradleEnumeration(cfg, rest)
+		reopenRuntask("") // refresh happens in task mode; reopen the plain keyword to stay there
 	default: // a launch kind: rest is cwd<US>cmdline
 		cwd, cmdline, ok := strings.Cut(rest, specSep)
 		if !ok {
@@ -385,42 +550,70 @@ func loadLastRun(cfg config.Config) (cwd, cmdline string, ok bool) {
 
 // --- runtask target state ---
 
+// runtaskState holds what the runtask keyword is scoped to: the selected project
+// Path (empty = project picker) and the picker Variant ("" / "+" / "~") the
+// project was chosen from. The variant is persisted so "back" and the launch
+// action's reopen return to the same widened picker, not the plain recents one.
 type runtaskState struct {
-	Path string `json:"path"`
+	Path    string `json:"path"`
+	Variant string `json:"variant,omitempty"`
 }
 
 func runtaskStatePath(cfg config.Config) string {
 	return filepath.Join(cfg.DataDir, "runtask.json")
 }
 
-// loadRuntaskTarget returns the project the runtask keyword is currently scoped
-// to, or "" for the project picker.
-func loadRuntaskTarget(cfg config.Config) string {
+// loadRuntaskState returns the full runtask scope. A missing/unreadable file
+// reads as the empty state (project picker, plain variant).
+func loadRuntaskState(cfg config.Config) runtaskState {
 	data, err := os.ReadFile(runtaskStatePath(cfg))
 	if err != nil {
-		return ""
+		return runtaskState{}
 	}
 	var s runtaskState
 	if json.Unmarshal(data, &s) != nil {
-		return ""
+		return runtaskState{}
 	}
-	return s.Path
+	return s
 }
 
-func setRuntaskTarget(cfg config.Config, path string) {
+// loadRuntaskTarget returns the project the runtask keyword is currently scoped
+// to, or "" for the project picker.
+func loadRuntaskTarget(cfg config.Config) string {
+	return loadRuntaskState(cfg).Path
+}
+
+func writeRuntaskState(cfg config.Config, s runtaskState) {
 	if os.MkdirAll(cfg.DataDir, 0o755) != nil {
 		return
 	}
-	if data, err := json.Marshal(runtaskState{Path: path}); err == nil {
+	if data, err := json.Marshal(s); err == nil {
 		_ = os.WriteFile(runtaskStatePath(cfg), data, 0o644)
 	}
 }
 
-func clearRuntaskTarget(cfg config.Config) { _ = os.Remove(runtaskStatePath(cfg)) }
+// setRuntaskTarget records the chosen project and the variant it was picked
+// from. The variant rides along so a later "back" reopens the same picker.
+func setRuntaskTarget(cfg config.Config, path, variant string) {
+	writeRuntaskState(cfg, runtaskState{Path: path, Variant: variant})
+}
 
-// reopenRuntask re-opens Alfred on the runtask keyword so the keyword re-reads
-// the (just-changed) target and shows the next level. No-op outside Alfred.
-func reopenRuntask() {
+// clearRuntaskTarget drops the selected project but preserves the variant, so
+// "back" (and a reset launch) returns to the picker the project was chosen from
+// rather than the plain recents picker.
+func clearRuntaskTarget(cfg config.Config) {
+	v := loadRuntaskState(cfg).Variant
+	if v == "" {
+		_ = os.Remove(runtaskStatePath(cfg))
+		return
+	}
+	writeRuntaskState(cfg, runtaskState{Variant: v})
+}
+
+// reopenRuntask re-opens Alfred on the runtask keyword (with the given variant
+// suffix, "" / "+" / "~") so the keyword re-reads the just-changed scope and
+// shows the next level. No-op outside Alfred.
+func reopenRuntask(variant string) {
 	if os.Getenv("alfred_workflow_bundleid") == "" {
 		return
 	}
@@ -428,8 +621,8 @@ func reopenRuntask() {
 	if kw == "" {
 		kw = "runtask"
 	}
-	script := `tell application id "com.runningwithcrayons.Alfred" to search ` + applescriptQuote(kw+" ")
-	_ = exec.Command("osascript", "-e", script).Run()
+	script := `tell application id "com.runningwithcrayons.Alfred" to search ` + applescriptQuote(kw+variant+" ")
+	_ = exec.Command("/usr/bin/osascript", "-e", script).Run()
 }
 
 func dirExists(p string) bool {
@@ -475,6 +668,11 @@ func loadGradleTaskCache(cfg config.Config, projectPath, fingerprint string) ([]
 func refreshGradleTaskCache(cfg config.Config, projectPath string) {
 	fp := taskrunner.GradleFingerprint(projectPath)
 	if fp == "" {
+		// Not (or no longer) a Gradle project: there's nothing to enumerate. Still
+		// drop the in-flight marker so a stale "Refreshing…" spinner can't linger for
+		// the lease. No cooldown is needed — detectProjectTasks never re-spawns for a
+		// non-Gradle dir, so this can't loop.
+		_ = os.Remove(gradleSpawnMarker(cfg, projectPath))
 		return
 	}
 	// Enumerate directly (not via Detect) so only a genuine, non-empty Gradle
@@ -482,15 +680,37 @@ func refreshGradleTaskCache(cfg config.Config, projectPath string) {
 	// error can never poison the cache with the fixed-verb fallback for 24h.
 	gradle, err := taskrunner.EnumerateGradle(projectPath)
 	if err != nil || len(gradle) == 0 {
+		recordGradleEnumError(cfg, projectPath)
 		return
 	}
 	data, err := json.Marshal(gradleTaskCache{Fingerprint: fp, SavedUnix: time.Now().Unix(), Tasks: gradle})
 	if err != nil {
+		recordGradleEnumError(cfg, projectPath)
 		return
 	}
 	_ = os.MkdirAll(cfg.CacheDir, 0o755)
-	_ = os.WriteFile(gradleCachePath(cfg, projectPath), data, 0o644)
-	_ = os.Remove(gradleCachePath(cfg, projectPath) + ".spawning") // let a future refresh spawn again
+	if err := os.WriteFile(gradleCachePath(cfg, projectPath), data, 0o644); err != nil {
+		// Couldn't record the success: throttle it like a failure rather than leave
+		// neither a fresh cache nor a marker, which would let the next rerun re-spawn
+		// immediately and loop.
+		recordGradleEnumError(cfg, projectPath)
+		return
+	}
+	_ = os.Remove(gradleSpawnMarker(cfg, projectPath)) // success: stop the spinner, let a future refresh spawn again
+	_ = os.Remove(gradleErrorMarker(cfg, projectPath)) // clear any prior failure
+}
+
+// recordGradleEnumError marks a failed Gradle enumeration: it writes the .error
+// sentinel (which surfaces the error row and, within the lease, cools down
+// auto-respawns) and only then drops the .spawning marker. The ordering matters —
+// if the .error write fails, .spawning is left in place as a fallback throttle
+// (bounded by its own lease), so a rerun still can't tight-loop a re-spawn.
+func recordGradleEnumError(cfg config.Config, projectPath string) {
+	_ = os.MkdirAll(cfg.CacheDir, 0o755)
+	if err := os.WriteFile(gradleErrorMarker(cfg, projectPath), nil, 0o644); err != nil {
+		return
+	}
+	_ = os.Remove(gradleSpawnMarker(cfg, projectPath))
 }
 
 // spawnGradleEnumeration launches a detached `jb tasks --enumerate-gradle` that
@@ -498,14 +718,25 @@ func refreshGradleTaskCache(cfg config.Config, projectPath string) {
 // short-lived marker debounces it so repeated keystrokes (each re-running the
 // Script Filter) don't spawn a stampede of overlapping Gradle daemons.
 func spawnGradleEnumeration(cfg config.Config, projectPath string) {
-	marker := gradleCachePath(cfg, projectPath) + ".spawning"
-	// A fresh marker means an enumeration is already in flight; a stale one (a
-	// crashed prior spawn) is swept so it can't block forever.
+	// Back off when the last enumeration recently failed, so a broken build doesn't
+	// retry on every keystroke. A manual refresh removes this sentinel first, so it
+	// is never blocked by the cooldown.
+	if markerFresh(gradleErrorMarker(cfg, projectPath)) {
+		return
+	}
+	marker := gradleSpawnMarker(cfg, projectPath)
+	// A fresh marker means an enumeration is already in flight. A stale one is
+	// swept only when its recorded process is actually gone — a Gradle enumeration
+	// that runs past the lease (cold daemon, huge project) is still in flight, so
+	// we must not spawn a duplicate just because the marker aged out.
 	if info, err := os.Stat(marker); err == nil {
-		if time.Since(info.ModTime()) < 60*time.Second {
+		if time.Since(info.ModTime()) < gradleEnumLease {
 			return
 		}
-		_ = os.Remove(marker)
+		if pid := readMarkerPID(marker); pid > 0 && processAlive(pid) {
+			return // time-stale, but the enumeration is still running
+		}
+		_ = os.Remove(marker) // crashed leftover (or no live process) — sweep it
 	}
 	_ = os.MkdirAll(cfg.CacheDir, 0o755)
 	// Create the marker atomically so two concurrent Script Filter invocations
@@ -514,15 +745,44 @@ func spawnGradleEnumeration(cfg config.Config, projectPath string) {
 	if err != nil {
 		return // lost the race (or unwritable) — another invocation is spawning
 	}
-	_ = f.Close()
 
 	exe, err := os.Executable()
 	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(marker) // nothing will run; don't leave a phantom in-flight marker
 		return
 	}
 	cmd := exec.Command(exe, "tasks", "--path", projectPath, "--enumerate-gradle")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	_ = cmd.Start()
+	if err := cmd.Start(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(marker) // failed to spawn; clear the marker so the spinner/rerun won't wedge
+		return
+	}
+	// Record the PID so a later stale-marker check can tell "still running" from
+	// "crashed", then close. mtime updates here — harmless for the time-based
+	// freshness check that drives the spinner.
+	_, _ = fmt.Fprintf(f, "%d", cmd.Process.Pid)
+	_ = f.Close()
+}
+
+// readMarkerPID returns the PID recorded in a spawn marker, or 0 if the marker
+// is empty/unreadable (older markers predate PID recording).
+func readMarkerPID(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return pid
+}
+
+// processAlive reports whether pid names a live process. Signal 0 probes for
+// existence without delivering a signal; EPERM means it exists but is owned by
+// another user (still alive).
+func processAlive(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || err == syscall.EPERM
 }
 
 // --- helpers ---

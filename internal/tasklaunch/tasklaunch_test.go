@@ -30,7 +30,7 @@ func TestTerminalAppTabUsesSystemEventsKeystroke(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := joined(*got)
-	if !strings.HasPrefix((*got)[0], "osascript") {
+	if (*got)[0] != macosOsascript {
 		t.Fatalf("expected osascript, got %v", *got)
 	}
 	if !strings.Contains(a, `keystroke "t" using command down`) {
@@ -75,7 +75,7 @@ func TestCustomTemplateSubstitutesTokens(t *testing.T) {
 		TemplateCmd: "kitty @ launch --type=tab --cwd {cwd} {cmd}",
 	}.Launch()
 	a := joined(*got)
-	if (*got)[0] == "osascript" {
+	if (*got)[0] == macosOsascript {
 		t.Fatal("template should bypass the built-in osascript path")
 	}
 	if !strings.Contains(a, "kitty @ launch --type=tab --cwd '/my proj' npm run dev") {
@@ -86,7 +86,7 @@ func TestCustomTemplateSubstitutesTokens(t *testing.T) {
 func TestGhosttyWindowUsesOpenDashE(t *testing.T) {
 	got := capture(t)
 	_ = Spec{CommandLine: "make build", Cwd: "/p", Kind: KindWindow, Terminal: "Ghostty"}.Launch()
-	if (*got)[0] != "open" {
+	if (*got)[0] != macosOpen {
 		t.Fatalf("ghostty window should launch via open, got %v", *got)
 	}
 	a := joined(*got)
@@ -109,7 +109,7 @@ func TestGhosttyWindowUsesOpenDashE(t *testing.T) {
 func TestGhosttyTabUsesSystemEventsNewTab(t *testing.T) {
 	got := capture(t)
 	_ = Spec{CommandLine: "./gradlew runIde", Cwd: "/p", Kind: KindTab, Terminal: "Ghostty"}.Launch()
-	if (*got)[0] != "osascript" {
+	if (*got)[0] != macosOsascript {
 		t.Fatalf("ghostty tab should use osascript/System Events, got %v", *got)
 	}
 	a := joined(*got)
@@ -124,7 +124,7 @@ func TestGhosttyTabUsesSystemEventsNewTab(t *testing.T) {
 func TestCopyKindUsesPbcopy(t *testing.T) {
 	got := capture(t)
 	_ = Spec{CommandLine: "./gradlew test", Cwd: "/p", Kind: KindCopy}.Launch()
-	if (*got)[0] != "pbcopy" {
+	if (*got)[0] != macosPbcopy {
 		t.Errorf("copy should invoke pbcopy, got %v", *got)
 	}
 }

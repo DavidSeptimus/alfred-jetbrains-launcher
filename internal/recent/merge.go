@@ -179,6 +179,16 @@ func isWorktree(dir string) bool {
 	return strings.Contains(string(data), "/worktrees/")
 }
 
+// IsGitCheckout reports whether dir is the root of a git checkout — a normal
+// repo (".git" directory), a linked worktree, or a submodule (".git" file). It's
+// a single Lstat (no git process), used to tell a real project from a leftover
+// nested directory (e.g. a removed worktree's husk, or stray build output) that
+// carries no git metadata.
+func IsGitCheckout(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
 // GitBranch returns the current branch (or a short SHA when detached) for the
 // repo or worktree at dir, or "" if it isn't a git checkout. It reads
 // ".git"/HEAD directly — no git process — so it is cheap to call per result.
