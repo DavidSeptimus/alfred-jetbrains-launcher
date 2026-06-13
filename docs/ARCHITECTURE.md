@@ -134,7 +134,7 @@ notification + the apply action (everything else opens the project). The apply
 action is wired onward to an error notification that shows its stdout, suppressed
 on success. The whole update graph is release-only — a source build omits it.
 Code: `internal/update`, `cmd/jb` `updateBanner` / `spawnBackgroundRefresh` /
-`cmdUpdate`; the Conditional + notifications live in `cmd/genplist`.
+`cmdUpdate`; the Conditional + notifications live in `alfred/cmd/genplist`.
 
 ---
 
@@ -171,4 +171,4 @@ flag first, then launches the now-clean binary. The sweep is scoped to `"$PWD"`
 (our own bundle, never a sibling workflow) and guarded by a `.dequarantined`
 marker so it runs once per install; Alfred wipes the marker when it re-imports an
 upgrade, so a re-downloaded (and thus re-quarantined) build is cleaned again.
-Code: `dequarantinePrefix` in `cmd/genplist/main.go`.
+Code: `dequarantinePrefix` in `alfred/cmd/genplist/main.go`.

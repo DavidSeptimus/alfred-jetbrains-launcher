@@ -30,11 +30,11 @@ build-universal:
 	GOARCH=amd64 $(GOBUILD) -o build/tmp/jb-amd64 ./cmd/jb
 	lipo -create -output $(BUNDLE)/jb build/tmp/jb-arm64 build/tmp/jb-amd64
 
-## plist: regenerate info.plist from workflow/ides.json + per-object canvas icons
+## plist: regenerate info.plist from alfred/workflow/ides.json + per-object canvas icons
 ## (run after `icons` so the per-object <uid>.png files can be populated)
 plist:
 	mkdir -p $(BUNDLE)
-	go run ./cmd/genplist -ides workflow/ides.json -o $(BUNDLE)/info.plist -version $(VERSION) -channel $(CHANNEL) -bundle $(BUNDLE)
+	go run ./alfred/cmd/genplist -ides alfred/workflow/ides.json -o $(BUNDLE)/info.plist -version $(VERSION) -channel $(CHANNEL) -bundle $(BUNDLE)
 
 ## icons: stage the vendored fallback icons into the bundle
 ## (installed IDEs render their own icon at runtime via Alfred's fileicon)
